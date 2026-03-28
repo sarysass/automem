@@ -38,8 +38,9 @@ uv run python -m py_compile backend/main.py cli/memory scripts/scheduled_consoli
 - 仓库中只保留 `.env.example`
 - 真正部署使用的 `.env` 不进入 git
 
-## 运行时接入约束
+## Adapter 贡献约束
 
-- runtime 专用适配器不进入本仓库
-- 本仓库只维护通用 API / CLI / 数据模型 / 文档
-- 各 Agent 的本地实现应放在其自身目录中
+- runtime adapter 可以进入本仓库，但必须保持为通用模板或示例
+- 不要把某台设备上的最终安装态、私有路径、真实配置直接提交进来
+- 本仓库维护的是通用 API / CLI / 数据模型 / adapter 模板 / 文档
+- 各 Agent 的真实本地部署副本仍应放在其自身目录中

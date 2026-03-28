@@ -1,84 +1,105 @@
-# 集成边界说明
+# 集成架构说明
 
-本文档说明 `automem` 与各类 Agent / runtime 的边界约定。
+本文档说明 `automem` 的服务端、客户端 adapter，以及公开仓库边界。
 
-## 核心原则
+## 完整架构
 
-`automem` 仓库只负责通用核心能力：
+`automem` 由两大部分组成：
 
-- 后端 API
-- CLI
-- 前端管理界面
-- 任务治理与 consolidation
-- 通用测试与文档
+1. 服务端与管理层
+- `backend/`
+- `cli/`
+- `frontend/`
+- `ops/`
+- `scripts/`
 
-运行时专用适配器不放在本仓库中。
+2. 客户端接入层
+- `adapters/codex/`
+- `adapters/openclaw/`
+- `adapters/opencode/`
+- `adapters/claude-code/`
 
-## 为什么这样做
+服务端负责统一存储、检索、任务治理和管理接口。客户端 adapter 负责把不同 Agent 的上下文、工具、hooks 或 MCP 能力接到同一套核心 API / CLI 上。
 
-这样可以避免把下列内容混进开源仓库：
+## 仓库包含什么
 
-- 本地插件实现
-- MCP 进程入口
-- 私有路径
-- 用户本地配置
-- 只适用于某个 Agent 的运行时代码
+本仓库现在包含：
 
-这样也更符合发布后的维护边界：
+- 通用后端实现
+- 中文管理界面
+- CLI 与运维脚本
+- 可公开发布的 adapter 模板
+- 示例配置与中文文档
 
-- 核心仓库负责稳定 API 和数据语义
-- 各 Agent 本地目录负责接入实现和本地部署
+## 仓库不包含什么
 
-## 推荐接入方式
+本仓库不应包含：
+
+- 真实 `.env`
+- 真实 API key
+- 真实主机地址
+- 用户本机路径
+- 某个 Agent 已安装完成后的私有副本
+
+也就是说，仓库里放的是“可发布模板”，而不是“某个人机器上的最终安装态”。
+
+## 统一契约
+
+所有 adapter 共享同一套核心契约：
+
+- HTTP API
+- CLI 行为
+- 路由语义
+- 长期记忆 / 任务记忆数据结构
+- 任务注册与 task summary 写入方式
+
+推荐优先使用以下环境变量：
+
+- `MEMORY_URL`
+- `MEMORY_API_KEY`
+- `MEMORY_USER_ID`
+- `MEMORY_AGENT_ID`
+- `MEMORY_PROJECT_ID`
+- `AUTOMEM_HOME`
+- `AUTOMEM_CLI`
+- `AUTOMEM_PYTHON`
+
+其中：
+
+- `MEMORY_*` 用于连接后端服务与声明身份
+- `AUTOMEM_*` 用于帮助 adapter 定位本地仓库或 CLI
+
+## 各 Adapter 推荐形态
 
 ### Codex
 
-- 使用本地 MCP server
-- MCP 实现放在 `~/.codex/...` 之类的 Agent 本地目录
-- 通过 `MEMORY_URL`、`MEMORY_API_KEY`、`AUTOMEM_HOME` 等环境变量接入
+- 形态：本地 MCP server
+- 仓库模板：`adapters/codex/`
+- 部署方式：复制到 `~/.codex/...` 或任意本地目录后注册
 
 ### OpenClaw
 
-- 使用本地 plugin / hooks
-- 插件实现放在 `~/.openclaw/extensions/...`
-- 通过本地 `openclaw.json` 或环境变量注入共享记忆配置
-
-### Claude Code
-
-- 使用本地 plugin / hooks / command
-- 插件实现放在 `~/.claude/...`
-- 通过环境变量连接到共享后端或 CLI
+- 形态：memory plugin
+- 仓库模板：`adapters/openclaw/`
+- 部署方式：复制到 `~/.openclaw/extensions/...` 并在本地配置中启用
 
 ### OpenCode
 
-- 使用本地 plugin / command
-- 插件实现放在 `~/.config/opencode/...`
-- 建议显式设置 `AUTOMEM_HOME` 或 `MEMORY_PLATFORM_CLI`
+- 形态：plugin + CLI
+- 仓库模板：`adapters/opencode/`
+- 部署方式：复制到 `.opencode/` 或 `~/.config/opencode/plugins/...`
 
-## 仓库内应保留什么
+### Claude Code
 
-适合留在本仓库中的只有：
+- 形态：plugin + hooks
+- 仓库模板：`adapters/claude-code/`
+- 部署方式：复制到 `~/.claude/plugins/...` 或通过 `--plugin-dir` 加载
 
-- 通用 `.env.example`
-- API 文档
-- 数据模型与治理逻辑
-- 示例命令
-- 不含私人信息的 benchmark / test fixtures
+## 发布与维护原则
 
-## 仓库内不应保留什么
+新增 adapter 时请遵守：
 
-- 真实 `.env`
-- 私有主机地址
-- 个人身份信息
-- 实际生产数据导出
-- 已安装到本机 Agent 目录中的插件副本
-
-## 适配器开发建议
-
-如果需要为某个 runtime 新增接入，建议做法是：
-
-1. 先在本仓库定义清楚所需 API / CLI 契约。
-2. 在对应 Agent 的本地目录实现适配器。
-3. 只把通用说明、协议说明、模板配置留在本仓库。
-
-不要把用户本地安装态直接反向塞回核心仓库。
+1. 先定义清楚与核心服务的通用契约。
+2. 仓库内只保留通用源码、模板与示例。
+3. 任何面向某台设备的真实配置都只留在本地安装目录，不回写到公开仓库。
+4. 产品名统一使用 `automem`，实现依赖名如 `mem0` 只保留在技术细节中。

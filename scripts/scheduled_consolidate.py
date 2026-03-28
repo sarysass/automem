@@ -20,7 +20,7 @@ EXPECTED_KEYS = {
 
 
 def load_runtime_env() -> None:
-    explicit = os.environ.get("MEMORY_PLATFORM_ENV_FILE")
+    explicit = os.environ.get("AUTOMEM_ENV_FILE")
     candidates: list[Path] = []
     if explicit:
         candidates.append(Path(explicit))

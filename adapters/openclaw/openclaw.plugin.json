@@ -1,0 +1,83 @@
+{
+  "id": "automem-memory",
+  "kind": "memory",
+  "uiHints": {
+    "api.baseUrl": {
+      "label": "automem API Base URL",
+      "placeholder": "http://127.0.0.1:8888",
+      "help": "Shared automem service base URL"
+    },
+    "api.apiKey": {
+      "label": "automem API Key",
+      "sensitive": true,
+      "placeholder": "${OPENCLAW_AUTOMEM_API_KEY}",
+      "help": "Agent key used to authenticate to the automem service"
+    },
+    "identity.userId": {
+      "label": "User ID",
+      "placeholder": "example-user"
+    },
+    "identity.agentId": {
+      "label": "Agent ID",
+      "placeholder": "openclaw-instance"
+    },
+    "identity.projectId": {
+      "label": "Project ID",
+      "placeholder": "project-alpha",
+      "advanced": true
+    },
+    "autoRecall": {
+      "label": "Auto Recall"
+    },
+    "autoCapture": {
+      "label": "Auto Capture"
+    },
+    "recallTopK": {
+      "label": "Recall Top K",
+      "placeholder": "6",
+      "advanced": true
+    },
+    "recallThreshold": {
+      "label": "Recall Threshold",
+      "placeholder": "0.3",
+      "advanced": true
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "api": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": { "type": "string" },
+          "apiKey": { "type": "string" }
+        },
+        "required": ["baseUrl", "apiKey"]
+      },
+      "identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "userId": { "type": "string" },
+          "agentId": { "type": "string" },
+          "projectId": { "type": "string" }
+        },
+        "required": ["userId", "agentId"]
+      },
+      "autoRecall": { "type": "boolean" },
+      "autoCapture": { "type": "boolean" },
+      "recallTopK": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 20
+      },
+      "recallThreshold": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  }
+}

@@ -5,6 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/automem/app
-EnvironmentFile=/opt/automem/app/.env
-ExecStart=/opt/automem/.venv/bin/python /opt/automem/app/scripts/scheduled_consolidate.py
+WorkingDirectory=/opt/automem
+EnvironmentFile=/opt/automem/backend/.env
+ExecStart=/opt/automem/.venv/bin/python /opt/automem/scripts/scheduled_consolidate.py

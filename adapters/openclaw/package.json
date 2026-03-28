@@ -1,0 +1,11 @@
+{
+  "name": "automem-openclaw-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw memory plugin for automem shared memory",
+  "main": "index.ts",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}

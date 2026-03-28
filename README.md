@@ -1,38 +1,40 @@
 # automem
 
-面向多 Agent 协作的共享记忆平台。
+面向多 Agent 协作的共享记忆系统 monorepo。
 
-`automem` 提供一套可发布、可复用的通用核心能力：
+`automem` 现在同时包含三层内容：
 
-- FastAPI 后端
-- CLI 优先的运维与管理入口
-- 中文管理界面
-- 长期记忆 / 任务记忆分层模型
-- 路由、任务治理、检索与 consolidation
+- 服务端核心：FastAPI 后端、检索与治理逻辑、任务注册与 consolidation
+- 管理与运维层：CLI 优先入口、中文前端管理界面、运维脚本与 systemd 模板
+- 客户端接入层：Codex、OpenClaw、OpenCode、Claude Code 的公开 adapter 模板
 
-## 仓库边界
+## 仓库定位
 
-本仓库只保留适合公开发布的通用核心，不再内置任何面向特定运行时的本地插件、MCP 服务或私有部署配置。
+本仓库是一个可公开发布的完整项目仓库，而不是只包含服务端核心的子集。它包含：
 
-这意味着：
+- 通用后端实现
+- 通用前端与运维入口
+- 可发布的 runtime adapter 源码与模板
+- 中文优先的说明文档与示例配置
 
-- OpenClaw / Codex / Claude Code / OpenCode 的运行时接入代码不放在本仓库
-- 真实部署地址、真实密钥、个人身份信息、私有主机名不进入本仓库
-- 仓库中的示例、样例数据、基准用例都使用通用占位内容
+同时仍然遵守开源边界：
 
-运行时适配器应部署在各自 Agent 的本地目录中，通过环境变量或 API 配置连接到本仓库提供的核心服务。
+- 不提交真实部署地址、真实密钥、真实主机名
+- 不提交个人身份信息、个人路径、私有环境配置
+- adapter 只提供可复用模板，不直接携带某台机器的安装态
 
 ## 目录结构
 
 ```text
 automem/
+├── adapters/                # Codex / OpenClaw / OpenCode / Claude Code adapters
 ├── backend/                 # FastAPI 后端
 ├── cli/                     # 统一 CLI 入口
+├── docs/                    # 架构与集成文档
 ├── frontend/                # 中文前端管理界面
-├── docs/                    # 通用文档
 ├── ops/                     # 调度与运维模板
 ├── scripts/                 # 运维脚本
-└── tests/                   # 测试
+└── tests/                   # 后端与仓库级测试
 ```
 
 ## 快速开始
@@ -41,6 +43,14 @@ automem/
 uv sync --all-groups
 cp backend/.env.example backend/.env
 uv run pytest
+```
+
+如需本地查看管理界面：
+
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
 ## 常用命令
@@ -57,20 +67,24 @@ uv run cli/memory --pretty metrics
 uv run cli/memory --pretty consolidate --dry-run
 ```
 
-## 运行时接入原则
+## Adapter 概览
 
-本仓库不直接承载运行时适配器源码，但要求所有适配器共享同一套：
+- `adapters/codex/`：基于 MCP 的 Codex adapter 模板
+- `adapters/openclaw/`：OpenClaw memory plugin 模板
+- `adapters/opencode/`：OpenCode plugin + CLI 集成模板
+- `adapters/claude-code/`：Claude Code hooks / plugin 模板
 
-- 后端 API
-- 路由语义
-- 任务注册模型
-- 长期记忆与任务记忆的数据结构
+这些目录中的文件都保持为可发布、可复制、可二次定制的通用模板。实际部署时，请将模板复制到对应 Agent 的本地目录，并通过环境变量或配置文件注入真实连接信息。
 
-详见：[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
+详见：
+
+- [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
+- [adapters/README.zh-CN.md](adapters/README.zh-CN.md)
 
 ## 文档
 
 - [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
+- [adapters/README.zh-CN.md](adapters/README.zh-CN.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [SECURITY.md](SECURITY.md)
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)

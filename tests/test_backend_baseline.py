@@ -501,7 +501,7 @@ def test_task_resolution_handles_next_step_question_against_existing_task(client
         json={
             "user_id": "user-a",
             "agent_id": "agent-alpha",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_frontend-panel",
             "title": "前端管理界面优化",
             "summary": "完成了首页布局收敛。",
@@ -517,7 +517,7 @@ def test_task_resolution_handles_next_step_question_against_existing_task(client
         json={
             "user_id": "user-a",
             "agent_id": "agent-alpha",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "message": "前端管理界面的下一步是什么",
         },
     )
@@ -534,7 +534,7 @@ def test_task_resolution_does_not_create_task_for_status_check_question(client, 
         json={
             "user_id": "user-a",
             "agent_id": "agent-alpha",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "message": "当前执行任务状态是什么",
         },
     )
@@ -550,7 +550,7 @@ def test_task_resolution_avoids_false_positive_match_for_unrelated_next_step_que
         json={
             "user_id": "user-a",
             "agent_id": "agent-alpha",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_shared_memory",
             "title": "继续共享记忆系统的任务并先结合已有约束",
             "summary": "完成了回滚与 smoke 测试。",
@@ -565,7 +565,7 @@ def test_task_resolution_avoids_false_positive_match_for_unrelated_next_step_que
         json={
             "user_id": "user-a",
             "agent_id": "agent-alpha",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "message": "视频压缩方案的下一步是什么",
         },
     )
@@ -607,7 +607,7 @@ def test_tasks_list_marks_system_and_meta_tasks(client, auth_headers):
         json={
             "user_id": "user-a",
             "agent_id": "codex",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_automem-ui",
             "title": "优化前端管理界面",
             "summary": "完成了首页布局收敛。",
@@ -630,7 +630,7 @@ def test_question_style_task_title_is_classified_as_meta(client, auth_headers):
         json={
             "user_id": "user-a",
             "agent_id": "codex",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_共享记忆系统这个任务的下一步是什么",
             "title": "共享记忆系统这个任务的下一步是什么",
             "summary": "共享记忆系统这个任务的下一步是什么",
@@ -650,7 +650,7 @@ def test_task_status_question_title_is_classified_as_meta(client, auth_headers):
         json={
             "user_id": "user-a",
             "agent_id": "codex",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_当前执行任务状态是什么",
             "title": "当前执行任务状态是什么",
             "summary": "当前执行任务状态是什么",
@@ -670,7 +670,7 @@ def test_tasks_list_exposes_clean_display_fields(client, auth_headers):
         json={
             "user_id": "user-a",
             "agent_id": "codex",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_updated-automem-frontend-typography",
             "title": "Updated automem frontend typography to use Songti SC across the full UI,",
             "summary": "[[reply_to_current]] 已完成 smoke 测试，下一步是检查前端管理界面。",
@@ -713,7 +713,7 @@ def test_tasks_list_rewrites_task_resolution_titles_and_keyword_soup_preview(cli
         json={
             "user_id": "user-a",
             "agent_id": "codex",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_task-resolution-centralization",
             "title": "继续完成共享记忆系统的中心化 task resolution 改造并做全端部署验证",
             "summary": "task todo pending deadline follow-up next action 待办 任务 跟进 截止",
@@ -757,7 +757,7 @@ def test_task_normalize_archives_non_work_items_and_rewrites_titles(client, auth
         json={
             "user_id": "user-a",
             "agent_id": "codex",
-            "project_id": "memory-hub",
+            "project_id": "automem-demo",
             "task_id": "task_work_clean",
             "title": "优化前端管理界面",
             "summary": "完成了首页布局收敛。",

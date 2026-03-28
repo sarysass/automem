@@ -12,13 +12,13 @@ from dotenv import load_dotenv
 
 
 def load_runtime_env() -> None:
-    explicit = os.environ.get("MEMORY_PLATFORM_ENV_FILE")
+    explicit = os.environ.get("AUTOMEM_ENV_FILE")
     candidates = []
     if explicit:
         candidates.append(Path(explicit))
     repo_root = Path(__file__).resolve().parents[1]
     candidates.append(repo_root / "backend" / ".env")
-    candidates.append(repo_root / "integrations" / "codex" / ".env")
+    candidates.append(repo_root / "adapters" / "codex" / ".env")
     for candidate in candidates:
         if candidate.exists():
             load_dotenv(candidate)
@@ -200,7 +200,7 @@ def cmd_cache_rebuild(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="memory", description="Shared memory platform CLI")
+    parser = argparse.ArgumentParser(prog="memory", description="automem CLI")
     parser.add_argument("--pretty", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 

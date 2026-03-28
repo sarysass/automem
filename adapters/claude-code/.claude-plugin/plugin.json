@@ -1,0 +1,8 @@
+{
+  "name": "automem-shared-memory",
+  "version": "0.1.0",
+  "description": "Claude Code plugin for automem using hooks-based recall and capture.",
+  "author": {
+    "name": "automem"
+  }
+}
