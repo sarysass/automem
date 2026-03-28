@@ -1,0 +1,10 @@
+[Unit]
+Description=Run automem daily consolidation once per day
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=automem-consolidate.service
+
+[Install]
+WantedBy=timers.target

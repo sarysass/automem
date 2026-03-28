@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import httpx
+from dotenv import load_dotenv
+
+
+def load_runtime_env() -> None:
+    explicit = os.environ.get("MEMORY_PLATFORM_ENV_FILE")
+    candidates = []
+    if explicit:
+        candidates.append(Path(explicit))
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates.append(repo_root / "backend" / ".env")
+    candidates.append(repo_root / "integrations" / "codex" / ".env")
+    for candidate in candidates:
+        if candidate.exists():
+            load_dotenv(candidate)
+
+
+load_runtime_env()
+
+
+def build_client() -> httpx.Client:
+    base_url = os.environ.get("MEMORY_URL") or f"http://{os.environ.get('BIND_HOST', '127.0.0.1')}:{os.environ.get('BIND_PORT', '8888')}"
+    api_key = os.environ.get("MEMORY_API_KEY") or os.environ.get("ADMIN_API_KEY", "")
+    return httpx.Client(
+        base_url=base_url.rstrip("/"),
+        headers={"X-API-Key": api_key},
+        timeout=60.0,
+        trust_env=False,
+    )
+
+
+def emit(data: Any, pretty: bool = False) -> None:
+    if pretty:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(data, ensure_ascii=False))
+
+
+def cmd_health(args: argparse.Namespace) -> None:
+    with build_client() as client:
+        emit(client.get("/healthz").json(), args.pretty)
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    payload: dict[str, Any] = {"query": args.query, "user_id": args.user_id}
+    if args.agent_id:
+        payload["agent_id"] = args.agent_id
+    if args.run_id:
+        payload["run_id"] = args.run_id
+    filters = {k: v for k, v in {
+        "domain": args.domain,
+        "project_id": args.project_id,
+        "category": args.category,
+    }.items() if v}
+    if filters:
+        payload["filters"] = filters
+    with build_client() as client:
+        emit(client.post("/search", json=payload).json(), args.pretty)
+
+
+def cmd_route(args: argparse.Namespace) -> None:
+    payload: dict[str, Any] = {
+        "user_id": args.user_id,
+        "message": args.message,
+        "agent_id": args.agent_id,
+        "project_id": args.project_id,
+        "assistant_output": args.assistant_output,
+        "client_hints": {
+            "explicit_long_term": args.explicit_long_term,
+            "task_like": args.task_like,
+            "source": args.source or "cli",
+        },
+    }
+    with build_client() as client:
+        emit(client.post("/memory-route", json=payload).json(), args.pretty)
+
+
+def cmd_capture(args: argparse.Namespace) -> None:
+    route_payload: dict[str, Any] = {
+        "user_id": args.user_id,
+        "message": args.message,
+        "agent_id": args.agent_id,
+        "project_id": args.project_id,
+        "assistant_output": args.assistant_output,
+        "client_hints": {
+            "explicit_long_term": args.explicit_long_term,
+            "task_like": args.task_like,
+            "source": args.source or "cli",
+        },
+    }
+    with build_client() as client:
+        routed = client.post("/memory-route", json=route_payload).json()
+        result: dict[str, Any] = {"route": routed.get("route"), "stored_long_term": [], "stored_task": None}
+        if routed.get("route") in {"long_term", "mixed"}:
+            entries = routed.get("entries") or routed.get("long_term") or []
+            for entry in entries:
+                store_payload = {
+                    "messages": [{"role": "user", "content": entry["text"]}],
+                    "user_id": args.user_id,
+                    "infer": False,
+                    "metadata": {
+                        "domain": "long_term",
+                        "category": entry.get("category"),
+                        "project_id": entry.get("project_id") or args.project_id,
+                        "source_agent": args.agent_id,
+                    },
+                }
+                result["stored_long_term"].append(client.post("/memories", json=store_payload).json())
+        if routed.get("route") in {"task", "mixed"} and routed.get("task"):
+            task = routed["task"]
+            summary = task.get("summary") or {}
+            task_payload = {
+                "user_id": args.user_id,
+                "agent_id": args.agent_id,
+                "project_id": args.project_id,
+                "task_id": task.get("task_id"),
+                "title": task.get("title"),
+                "summary": summary.get("summary"),
+                "progress": summary.get("progress"),
+                "blocker": summary.get("blocker"),
+                "next_action": summary.get("next_action"),
+                "message": args.message,
+                "assistant_output": args.assistant_output,
+            }
+            result["stored_task"] = client.post("/task-summaries", json=task_payload).json()
+        emit(result, args.pretty)
+
+
+def cmd_task_list(args: argparse.Namespace) -> None:
+    params = {"user_id": args.user_id}
+    if args.project_id:
+        params["project_id"] = args.project_id
+    if args.status:
+        params["status"] = args.status
+    with build_client() as client:
+        emit(client.get("/tasks", params=params).json(), args.pretty)
+
+
+def cmd_task_get(args: argparse.Namespace) -> None:
+    with build_client() as client:
+        emit(client.get(f"/tasks/{args.task_id}").json(), args.pretty)
+
+
+def cmd_task_close(args: argparse.Namespace) -> None:
+    with build_client() as client:
+        emit(client.post(f"/tasks/{args.task_id}/close", json={"reason": args.reason}).json(), args.pretty)
+
+
+def cmd_task_archive(args: argparse.Namespace) -> None:
+    with build_client() as client:
+        emit(client.post(f"/tasks/{args.task_id}/archive", json={"reason": args.reason}).json(), args.pretty)
+
+
+def cmd_metrics(args: argparse.Namespace) -> None:
+    with build_client() as client:
+        emit(client.get("/metrics").json(), args.pretty)
+
+
+def cmd_consolidate(args: argparse.Namespace) -> None:
+    payload = {
+        "dry_run": args.dry_run,
+        "dedupe_long_term": True,
+        "archive_closed_tasks": True,
+        "user_id": args.user_id,
+        "project_id": args.project_id,
+    }
+    with build_client() as client:
+        emit(client.post("/consolidate", json=payload).json(), args.pretty)
+
+
+def cmd_agent_key_create(args: argparse.Namespace) -> None:
+    payload = {
+        "agent_id": args.agent_id,
+        "label": args.label,
+        "scopes": [scope.strip() for scope in args.scopes.split(",") if scope.strip()],
+    }
+    if args.token:
+        payload["token"] = args.token
+    with build_client() as client:
+        emit(client.post("/agent-keys", json=payload).json(), args.pretty)
+
+
+def cmd_cache_rebuild(args: argparse.Namespace) -> None:
+    payload = {
+        "user_id": args.user_id,
+        "agent_id": args.agent_id,
+        "run_id": args.run_id,
+    }
+    with build_client() as client:
+        emit(client.post("/cache/rebuild", json=payload).json(), args.pretty)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="memory", description="Shared memory platform CLI")
+    parser.add_argument("--pretty", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    health = sub.add_parser("health")
+    health.set_defaults(func=cmd_health)
+
+    search = sub.add_parser("search")
+    search.add_argument("--query", required=True)
+    search.add_argument("--user-id", default=os.environ.get("MEMORY_USER_ID", "example-user"))
+    search.add_argument("--agent-id", default=os.environ.get("MEMORY_AGENT_ID"))
+    search.add_argument("--run-id")
+    search.add_argument("--domain")
+    search.add_argument("--project-id", default=os.environ.get("MEMORY_PROJECT_ID"))
+    search.add_argument("--category")
+    search.set_defaults(func=cmd_search)
+
+    route = sub.add_parser("route")
+    route.add_argument("--message", required=True)
+    route.add_argument("--assistant-output")
+    route.add_argument("--user-id", default=os.environ.get("MEMORY_USER_ID", "example-user"))
+    route.add_argument("--agent-id", default=os.environ.get("MEMORY_AGENT_ID"))
+    route.add_argument("--project-id", default=os.environ.get("MEMORY_PROJECT_ID"))
+    route.add_argument("--source", default="cli")
+    route.add_argument("--explicit-long-term", action="store_true")
+    route.add_argument("--task-like", action="store_true")
+    route.set_defaults(func=cmd_route)
+
+    capture = sub.add_parser("capture")
+    capture.add_argument("--message", required=True)
+    capture.add_argument("--assistant-output")
+    capture.add_argument("--user-id", default=os.environ.get("MEMORY_USER_ID", "example-user"))
+    capture.add_argument("--agent-id", default=os.environ.get("MEMORY_AGENT_ID"))
+    capture.add_argument("--project-id", default=os.environ.get("MEMORY_PROJECT_ID"))
+    capture.add_argument("--source", default="cli")
+    capture.add_argument("--explicit-long-term", action="store_true")
+    capture.add_argument("--task-like", action="store_true")
+    capture.set_defaults(func=cmd_capture)
+
+    task = sub.add_parser("task")
+    task_sub = task.add_subparsers(dest="task_command", required=True)
+
+    task_list = task_sub.add_parser("list")
+    task_list.add_argument("--user-id", default=os.environ.get("MEMORY_USER_ID", "example-user"))
+    task_list.add_argument("--project-id", default=os.environ.get("MEMORY_PROJECT_ID"))
+    task_list.add_argument("--status", default="active")
+    task_list.set_defaults(func=cmd_task_list)
+
+    task_get = task_sub.add_parser("get")
+    task_get.add_argument("task_id")
+    task_get.set_defaults(func=cmd_task_get)
+
+    task_close = task_sub.add_parser("close")
+    task_close.add_argument("task_id")
+    task_close.add_argument("--reason")
+    task_close.set_defaults(func=cmd_task_close)
+
+    task_archive = task_sub.add_parser("archive")
+    task_archive.add_argument("task_id")
+    task_archive.add_argument("--reason")
+    task_archive.set_defaults(func=cmd_task_archive)
+
+    metrics = sub.add_parser("metrics")
+    metrics.set_defaults(func=cmd_metrics)
+
+    consolidate = sub.add_parser("consolidate")
+    consolidate.add_argument("--dry-run", action="store_true")
+    consolidate.add_argument("--user-id")
+    consolidate.add_argument("--project-id")
+    consolidate.set_defaults(func=cmd_consolidate)
+
+    cache = sub.add_parser("cache")
+    cache_sub = cache.add_subparsers(dest="cache_command", required=True)
+    cache_rebuild = cache_sub.add_parser("rebuild")
+    cache_rebuild.add_argument("--user-id")
+    cache_rebuild.add_argument("--agent-id")
+    cache_rebuild.add_argument("--run-id")
+    cache_rebuild.set_defaults(func=cmd_cache_rebuild)
+
+    agent_key = sub.add_parser("agent-key")
+    key_sub = agent_key.add_subparsers(dest="agent_key_command", required=True)
+    key_create = key_sub.add_parser("create")
+    key_create.add_argument("--agent-id", required=True)
+    key_create.add_argument("--label", required=True)
+    key_create.add_argument("--scopes", default="search,store,route,task,metrics")
+    key_create.add_argument("--token")
+    key_create.set_defaults(func=cmd_agent_key_create)
+
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

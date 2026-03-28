@@ -1,0 +1,31 @@
+[project]
+name = "automem"
+version = "0.1.0"
+description = "CLI-first shared memory platform for multi-agent collaboration."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116,<1.0",
+  "httpx>=0.28,<1.0",
+  "python-dotenv>=1.1,<2.0",
+  "uvicorn>=0.35,<1.0",
+  "mem0ai>=1.0.0,<2.0",
+]
+
+[dependency-groups]
+dev = [
+  "mcp>=1.26,<2.0",
+  "pytest>=8.4,<9.0",
+  "pytest-cov>=7.0,<8.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
