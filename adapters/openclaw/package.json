@@ -5,6 +5,15 @@
   "type": "module",
   "description": "OpenClaw memory plugin for automem shared memory",
   "main": "index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "npm run build && node smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  },
   "openclaw": {
     "extensions": ["./index.ts"]
   }

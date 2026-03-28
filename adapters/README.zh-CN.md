@@ -18,6 +18,14 @@
 - 真实 `MEMORY_URL`、`MEMORY_API_KEY`、`MEMORY_USER_ID` 等值只在本地配置
 - 若需要自定义命名、工具集合或触发策略，请在复制后的本地副本里调整
 
+统一安装脚本见：
+
+- `scripts/install_adapter.py`
+
+统一安装说明见：
+
+- [docs/INSTALLATION.md](../docs/INSTALLATION.md)
+
 ## 开发约束
 
 - 产品名称统一使用 `automem`

@@ -54,6 +54,16 @@ cp adapters/opencode/automem.plugin.ts ~/.config/opencode/plugins/automem/
 cp adapters/opencode/package.json ~/.config/opencode/plugins/automem/
 ```
 
+## 校验命令
+
+在本目录执行：
+
+```bash
+npm install
+npm run typecheck
+npm run smoke
+```
+
 ## 说明
 
 - 这是公开模板，不包含真实部署地址、私有路径或个人身份信息

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - name: Install Python dependencies
+        run: uv sync --all-groups
+      - name: Ruff
+        run: uv run ruff check
+      - name: Pytest
+        run: uv run pytest
+      - name: Python syntax
+        run: uv run python -m py_compile backend/main.py cli/memory scripts/scheduled_consolidate.py scripts/install_adapter.py adapters/codex/config.py adapters/codex/client.py adapters/codex/mcp_server.py adapters/claude-code/scripts/common.py adapters/claude-code/scripts/recall.py adapters/claude-code/scripts/capture.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Frontend tests
+        run: npm test
+      - name: Frontend build
+        run: npm run build
+
+  adapters:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        adapter:
+          - openclaw
+          - opencode
+    defaults:
+      run:
+        working-directory: adapters/${{ matrix.adapter }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install adapter dependencies
+        run: npm install
+      - name: Adapter typecheck
+        run: npm run typecheck
+      - name: Adapter smoke
+        run: npm run smoke

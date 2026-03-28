@@ -42,6 +42,16 @@ cp -R adapters/openclaw/* ~/.openclaw/extensions/automem-memory/
 
 然后在 OpenClaw 的本地配置中启用该插件。
 
+## 校验命令
+
+在本目录执行：
+
+```bash
+npm install
+npm run typecheck
+npm run smoke
+```
+
 ## 说明
 
 - 本模板是公开版，不包含任何真实地址、个人路径或私有配置

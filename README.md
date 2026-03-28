@@ -80,11 +80,17 @@ uv run cli/memory --pretty consolidate --dry-run
 
 - [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
 - [adapters/README.zh-CN.md](adapters/README.zh-CN.md)
+- [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/NAMING.md](docs/NAMING.md)
 
 ## 文档
 
 - [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
 - [adapters/README.zh-CN.md](adapters/README.zh-CN.md)
+- [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/NAMING.md](docs/NAMING.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [SECURITY.md](SECURITY.md)
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)

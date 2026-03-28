@@ -30,7 +30,10 @@ uv run pytest
 
 ```bash
 uv run pytest
-uv run python -m py_compile backend/main.py cli/memory scripts/scheduled_consolidate.py
+uv run python -m py_compile backend/main.py cli/memory scripts/scheduled_consolidate.py scripts/install_adapter.py
+cd frontend && npm test && npm run build
+cd adapters/openclaw && npm install && npm run typecheck && npm run smoke
+cd adapters/opencode && npm install && npm run typecheck && npm run smoke
 ```
 
 ## 配置约束
