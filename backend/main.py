@@ -47,7 +47,7 @@ bootstrap_runtime_env()
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from governance import (
+from governance import (  # noqa: E402
     apply_hard_rules,
     build_long_term_duplicate_key,
     canonicalize_preference_text as governance_canonicalize_preference_text,
@@ -60,7 +60,7 @@ from governance import (
     should_run_offline_judge,
     should_store_task_memory,
 )
-from governance.schemas import RouteDecision, TextDecision
+from governance.schemas import RouteDecision, TextDecision  # noqa: E402
 
 try:
     from mem0 import Memory
@@ -3010,7 +3010,6 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
                 str(item.get("memory_id") or ""),
             ),
         )
-        keeper = ordered[0]
         for duplicate in ordered[1:]:
             duplicate_memory_ids.append(str(duplicate["memory_id"]))
     closed_tasks_archived = 0

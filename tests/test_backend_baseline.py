@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import pytest
 
 
 def add_long_term_memory(client, auth_headers, *, text: str, user_id: str, category: str = "project_context"):
@@ -1017,19 +1018,18 @@ def test_task_normalize_prune_keeps_task_when_memory_delete_fails(client, auth_h
         raise RuntimeError(f"cannot delete {memory_id}")
 
     backend_module.MEMORY_BACKEND.delete = failing_delete
-    response = client.post(
-        "/tasks/normalize",
-        headers=auth_headers,
-        json={
-            "user_id": "user-a",
-            "archive_non_work_active": False,
-            "prune_non_work_archived": True,
-            "dry_run": False,
-        },
-    )
+    with pytest.raises(RuntimeError, match="Failed to delete archived non-work task memories"):
+        client.post(
+            "/tasks/normalize",
+            headers=auth_headers,
+            json={
+                "user_id": "user-a",
+                "archive_non_work_active": False,
+                "prune_non_work_archived": True,
+                "dry_run": False,
+            },
+        )
     backend_module.MEMORY_BACKEND.delete = original_delete
-
-    assert response.status_code == 500
 
     archived_tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
     assert "task_cron-prune-fails" in {task["task_id"] for task in archived_tasks}

@@ -17,7 +17,6 @@ from common import (
 
 
 def build_session_start_context() -> str:
-    cfg = load_config()
     return build_session_start_context_from_hook({})
 
 
