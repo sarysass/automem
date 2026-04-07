@@ -72,6 +72,7 @@ except ImportError:  # pragma: no cover - optional in local tests
     Mem0Qdrant = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def patch_mem0_qdrant_indexes() -> None:
@@ -82,10 +83,9 @@ def patch_mem0_qdrant_indexes() -> None:
         return
     if getattr(Mem0Qdrant, "_automem_indexes_patched", False):
         return
-    patch_logger = logging.getLogger(__name__)
 
     def _skip_filter_indexes(self) -> None:  # type: ignore[override]
-        patch_logger.info("Skipping mem0 Qdrant payload index creation for collection %s", self.collection_name)
+        logger.info("Skipping mem0 Qdrant payload index creation for collection %s", self.collection_name)
 
     Mem0Qdrant._create_filter_indexes = _skip_filter_indexes  # type: ignore[assignment]
     Mem0Qdrant._automem_indexes_patched = True  # type: ignore[attr-defined]
