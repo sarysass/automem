@@ -44,6 +44,8 @@ type TaskResolutionResult = {
   reason?: string;
 };
 
+const captureFingerprintBySession = new Map<string, string>();
+
 function resolveEnvVars(value: string): string {
   return value.replace(/\$\{([^}]+)\}/g, (_match, envVar) => {
     const envValue = process.env[String(envVar)];
@@ -258,10 +260,58 @@ function isExplicitLongTermRequest(text: string): boolean {
 }
 
 function looksTaskLike(userText: string | undefined, assistantText: string | undefined): boolean {
-  const merged = [userText, assistantText].filter(Boolean).join("\n").toLowerCase();
-  return /继续|实现|修复|分析|排查|部署|任务|下一步|blocker|next step|fix|implement|deploy|continue|task/.test(
-    merged,
+  const user = normalizeText(userText ?? "").toLowerCase();
+  const assistant = normalizeText(assistantText ?? "").toLowerCase();
+  if (!user && !assistant) {
+    return false;
+  }
+  if (isExplicitLongTermRequest(user)) {
+    return false;
+  }
+  if (isSystemNoiseText(user) || isSystemNoiseText(assistant)) {
+    return false;
+  }
+  if (/\b(next step|next action|blocker|blocked|todo|milestone)\b|下一步|阻塞|待办|里程碑/.test(assistant)) {
+    return true;
+  }
+  const workIntent = /继续|实现|修复|分析|排查|部署|测试|重构|优化|\b(fix|implement|debug|deploy|refactor|optimi[sz]e|test)\b/;
+  const progressSignal = /\b(completed|implemented|fixed|updated|shipped)\b|已完成|完成了|已修复|已更新/;
+  return workIntent.test(user) && progressSignal.test(assistant);
+}
+
+function isSystemNoiseText(text: string): boolean {
+  const normalized = normalizeText(text).toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return (
+    normalized.startsWith("[cron:") ||
+    normalized.startsWith("conversation info (untrusted metadata)") ||
+    normalized.startsWith("system:") ||
+    normalized === "no_reply" ||
+    normalized.includes("[[reply_to_current]]")
   );
+}
+
+function buildCaptureFingerprint(userText: string | undefined, assistantText: string | undefined): string {
+  const user = normalizeText(userText ?? "");
+  const assistant = normalizeText(assistantText ?? "");
+  return `${user}\n---\n${assistant}`;
+}
+
+function shouldAutoCapture(userText: string | undefined, assistantText: string | undefined): boolean {
+  const user = normalizeText(userText ?? "");
+  const assistant = normalizeText(assistantText ?? "");
+  if (!user || !assistant) {
+    return false;
+  }
+  if (user.length < 4 || assistant.length < 4) {
+    return false;
+  }
+  if (isSystemNoiseText(user) || isSystemNoiseText(assistant)) {
+    return false;
+  }
+  return true;
 }
 
 async function apiRequest(cfg: PluginConfig, path: string, init?: RequestInit): Promise<any> {
@@ -362,7 +412,7 @@ async function routeMemory(
       client_hints: {
         source: "openclaw",
         explicit_long_term: payload.explicitLongTerm ?? false,
-        task_like: payload.taskLike ?? false,
+        ...(payload.taskLike ? { task_like: true } : {}),
       },
     }),
   });
@@ -379,6 +429,9 @@ async function storeSharedMemory(
     projectId?: string;
   },
 ): Promise<any> {
+  if (payload.domain === "task" && !payload.taskId) {
+    throw new Error("taskId is required when storing task memory");
+  }
   const body: Record<string, unknown> = {
     messages: [{ role: "user", content: payload.text }],
     user_id: cfg.identity.userId,
@@ -505,7 +558,7 @@ const memoryPlugin = {
               const resolved = await resolveTask(cfg, {
                 message: query,
                 sessionId: ctx.sessionKey || ctx.sessionId,
-                channel: ctx.trigger,
+                channel: ctx.trigger || ctx.channelId,
               });
               taskId = resolved.task_id;
             }
@@ -589,9 +642,12 @@ const memoryPlugin = {
               const resolved = await resolveTask(cfg, {
                 message: text,
                 sessionId: ctx.sessionKey || ctx.sessionId,
-                channel: ctx.trigger,
+                channel: ctx.trigger || ctx.channelId,
               });
               taskId = resolved.task_id;
+              if (!taskId) {
+                throw new Error("Unable to resolve taskId for task memory; refusing to store orphan task memory");
+              }
             }
 
             const result = await storeSharedMemory(cfg, {
@@ -636,7 +692,7 @@ const memoryPlugin = {
               const resolved = await resolveTask(cfg, {
                 message: category || "current task",
                 sessionId: ctx.sessionKey || ctx.sessionId,
-                channel: ctx.trigger,
+                channel: ctx.trigger || ctx.channelId,
               });
               taskId = resolved.task_id;
             }
@@ -747,17 +803,22 @@ const memoryPlugin = {
           const texts = extractTextsByRole(event.messages);
           const lastUser = texts.user.at(-1);
           const lastAssistant = texts.assistant.at(-1);
-          if (!lastUser && !lastAssistant) {
+          if (!shouldAutoCapture(lastUser, lastAssistant)) {
+            return;
+          }
+          const sessionKey = ctx.sessionKey || ctx.sessionId || "__global__";
+          const fingerprint = buildCaptureFingerprint(lastUser, lastAssistant);
+          if (captureFingerprintBySession.get(sessionKey) === fingerprint) {
             return;
           }
 
           const routed = await routeMemory(cfg, {
             message: lastUser ?? "",
             assistantOutput: lastAssistant,
-            sessionId: ctx.sessionKey || ctx.sessionId,
+            sessionId: sessionKey,
             channel: ctx.trigger || ctx.channelId,
             explicitLongTerm: lastUser ? isExplicitLongTermRequest(lastUser) : false,
-            taskLike: looksTaskLike(lastUser, lastAssistant),
+            taskLike: looksTaskLike(lastUser, lastAssistant) ? true : undefined,
           });
 
           const entries =
@@ -793,6 +854,7 @@ const memoryPlugin = {
               channel: ctx.trigger || ctx.channelId,
             });
           }
+          captureFingerprintBySession.set(sessionKey, fingerprint);
         } catch (error) {
           api.logger.warn(`automem-memory: auto capture failed: ${String(error)}`);
         }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 
 def add_long_term_memory(client, auth_headers, *, text: str, user_id: str, category: str = "project_context"):
     response = client.post(
@@ -101,6 +103,71 @@ def test_add_memory_rejects_task_noise_markers(client, auth_headers):
     assert listed.json()["results"] == []
 
 
+def test_add_memory_rejects_transport_metadata_noise(client, auth_headers):
+    response = client.post(
+        "/memories",
+        headers=auth_headers,
+        json={
+            "messages": [{"role": "user", "content": 'Conversation info (untrusted metadata): {"message_id":"1","sender":"bot"}'}],
+            "user_id": "user-a",
+            "infer": False,
+            "metadata": {"domain": "long_term", "category": "project_context"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "skipped"
+    assert payload["reason"] == "noise"
+    assert payload["noise_kind"] == "transport_metadata"
+
+
+def test_extract_long_term_entries_skips_query_like_identity_or_preference_text(backend_module):
+    assert backend_module.extract_long_term_entries("我叫什么名字，我的身份是什么") == []
+    assert backend_module.extract_long_term_entries("请用什么语言和我沟通") == []
+    assert backend_module.extract_long_term_entries("请记住：我叫什么名字，我的身份是什么") == []
+
+
+def test_memory_route_drops_time_scaffold(client, auth_headers):
+    response = client.post(
+        "/memory-route",
+        headers=auth_headers,
+        json={
+            "user_id": "user-a",
+            "agent_id": "agent-a",
+            "message": "Current time: 2026-04-07 10:00 UTC+8",
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["route"] == "drop"
+    assert payload["reason"]
+
+
+def test_memory_route_does_not_materialize_task_rows(client, auth_headers):
+    response = client.post(
+        "/memory-route",
+        headers=auth_headers,
+        json={
+            "user_id": "user-a",
+            "agent_id": "agent-a",
+            "project_id": "automem-demo",
+            "message": "继续修复 automem 的 task admission 问题",
+            "assistant_output": "已定位到任务表污染根因，下一步是调整 admission gate。",
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["route"] in {"task", "mixed"}
+
+    tasks = client.get(
+        "/tasks",
+        headers=auth_headers,
+        params={"user_id": "user-a", "project_id": "automem-demo", "status": "active"},
+    )
+    assert tasks.status_code == 200, tasks.text
+    assert tasks.json()["tasks"] == []
+
+
 def test_consolidate_canonicalizes_legacy_preferences_and_removes_task_noise(client, auth_headers, backend_module):
     english = backend_module.MEMORY_BACKEND.add(
         [{"role": "user", "content": "Prefers communication in Chinese"}],
@@ -158,6 +225,58 @@ def test_consolidate_canonicalizes_legacy_preferences_and_removes_task_noise(cli
     memories = listed.json()["results"]
     assert [item["memory"] for item in memories if item["metadata"].get("category") == "preference"] == ["偏好使用中文沟通"]
     assert all(item["memory"] != "NO_REPLY" for item in memories)
+
+
+def test_consolidate_removes_time_and_metadata_noise_and_normalizes_tasks(client, auth_headers, backend_module):
+    for idx, text in enumerate(
+        (
+            "Current time: 2026-04-07 10:00 Asia/Shanghai",
+            '[cron:daily] monitor lowendtalk heartbeat',
+            'Conversation info (untrusted metadata): {"message_id":"m1","sender":"bot","mentions":[]}',
+        ),
+        start=1,
+    ):
+        result = backend_module.MEMORY_BACKEND.add(
+            [{"role": "user", "content": text}],
+            user_id="user-a",
+            run_id=f"task_noise_{idx}",
+            metadata={"domain": "task", "category": "handoff", "task_id": f"task_noise_{idx}"},
+        )
+        backend_module.cache_memory_record(
+            memory_id=result["id"],
+            text=text,
+            user_id="user-a",
+            run_id=f"task_noise_{idx}",
+            agent_id=None,
+            metadata={"domain": "task", "category": "handoff", "task_id": f"task_noise_{idx}"},
+        )
+
+    backend_module.upsert_task(
+        task_id="task_cron-daily-monitor",
+        user_id="user-a",
+        project_id=None,
+        title="[cron] Daily monitor",
+        source_agent="agent-a",
+        last_summary="[cron:daily] monitor lowendtalk",
+    )
+
+    response = client.post(
+        "/consolidate",
+        headers=auth_headers,
+        json={"dry_run": False, "user_id": "user-a"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["deleted_noise_count"] >= 3
+    assert payload["normalized_tasks_count"] >= 1
+    assert payload["task_reclassified_count"] >= 1
+
+    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    assert listed.status_code == 200, listed.text
+    texts = [item["memory"] for item in listed.json()["results"]]
+    assert not any(text.startswith("Current time:") for text in texts)
+    assert not any(text.startswith("[cron:") for text in texts)
+    assert not any(text.startswith("Conversation info (untrusted metadata)") for text in texts)
 
 
 def test_search_uses_cache_path_without_get_all(client, auth_headers, backend_module):
@@ -574,32 +693,23 @@ def test_task_resolution_avoids_false_positive_match_for_unrelated_next_step_que
     assert payload["action"] == "no_task"
 
 
-def test_tasks_list_marks_system_and_meta_tasks(client, auth_headers):
-    cron_task = client.post(
-        "/task-summaries",
-        headers=auth_headers,
-        json={
-            "user_id": "user-a",
-            "agent_id": "openclaw-ring",
-            "task_id": "task_cron-12345-watchdog",
-            "title": "[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
-            "summary": "NO_REPLY",
-        },
+def test_tasks_list_marks_system_and_meta_tasks(client, auth_headers, backend_module):
+    backend_module.upsert_task(
+        task_id="task_cron-12345-watchdog",
+        user_id="user-a",
+        project_id=None,
+        title="[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
+        source_agent="openclaw-ring",
+        last_summary="NO_REPLY",
     )
-    assert cron_task.status_code == 200, cron_task.text
-
-    meta_task = client.post(
-        "/task-summaries",
-        headers=auth_headers,
-        json={
-            "user_id": "user-a",
-            "agent_id": "openclaw-wing",
-            "task_id": "task_conversation-info-untrusted-metadata",
-            "title": "Conversation info (untrusted metadata): ...",
-            "summary": "[[reply_to_current]] 目前我这次查到的共享 memory里，没有成型的 task / todo 清单。",
-        },
+    backend_module.upsert_task(
+        task_id="task_conversation-info-untrusted-metadata",
+        user_id="user-a",
+        project_id=None,
+        title="Conversation info (untrusted metadata): ...",
+        source_agent="openclaw-wing",
+        last_summary="[[reply_to_current]] 目前我这次查到的共享 memory里，没有成型的 task / todo 清单。",
     )
-    assert meta_task.status_code == 200, meta_task.text
 
     work_task = client.post(
         "/task-summaries",
@@ -637,10 +747,12 @@ def test_question_style_task_title_is_classified_as_meta(client, auth_headers):
         },
     )
     assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["action"] == "skipped"
+    assert payload["reason"] == "task_kind:meta"
 
     tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
-    indexed = {task["task_id"]: task for task in tasks}
-    assert indexed["task_共享记忆系统这个任务的下一步是什么"]["task_kind"] == "meta"
+    assert tasks == []
 
 
 def test_task_status_question_title_is_classified_as_meta(client, auth_headers):
@@ -657,10 +769,12 @@ def test_task_status_question_title_is_classified_as_meta(client, auth_headers):
         },
     )
     assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["action"] == "skipped"
+    assert payload["reason"] == "task_kind:meta"
 
     tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
-    indexed = {task["task_id"]: task for task in tasks}
-    assert indexed["task_当前执行任务状态是什么"]["task_kind"] == "meta"
+    assert tasks == []
 
 
 def test_tasks_list_exposes_clean_display_fields(client, auth_headers):
@@ -685,25 +799,68 @@ def test_tasks_list_exposes_clean_display_fields(client, auth_headers):
     assert task["summary_preview"] == "检查前端管理界面"
 
 
-def test_tasks_list_maps_no_reply_summary_to_empty_preview(client, auth_headers):
-    response = client.post(
-        "/task-summaries",
-        headers=auth_headers,
-        json={
-            "user_id": "user-a",
-            "agent_id": "openclaw-ring",
-            "task_id": "task_cron-12345-watchdog",
-            "title": "[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
-            "summary": "NO_REPLY",
-        },
+def test_tasks_list_maps_no_reply_summary_to_empty_preview(client, auth_headers, backend_module):
+    backend_module.upsert_task(
+        task_id="task_cron-12345-watchdog",
+        user_id="user-a",
+        project_id=None,
+        title="[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
+        source_agent="openclaw-ring",
+        last_summary="NO_REPLY",
     )
-    assert response.status_code == 200, response.text
 
     tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     indexed = {task["task_id"]: task for task in tasks}
     task = indexed["task_cron-12345-watchdog"]
     assert task["display_title"] == "Mac OpenCode 孤儿进程巡检"
     assert task["summary_preview"] is None
+
+
+def test_tasks_list_supports_cursor_pagination(client, auth_headers, backend_module):
+    for task_id in ("task_archived_a", "task_archived_b", "task_archived_c"):
+        backend_module.upsert_task(
+            task_id=task_id,
+            user_id="user-a",
+            project_id="automem-demo",
+            title=f"{task_id} title",
+            source_agent="codex",
+            last_summary=f"{task_id} summary",
+        )
+        archived = client.post(f"/tasks/{task_id}/archive", headers=auth_headers, json={"reason": "pagination"})
+        assert archived.status_code == 200, archived.text
+
+    with sqlite3.connect(backend_module.TASK_DB_PATH) as conn:
+        conn.execute("UPDATE tasks SET updated_at = ? WHERE task_id = ?", ("2026-04-08T03:00:00+00:00", "task_archived_a"))
+        conn.execute("UPDATE tasks SET updated_at = ? WHERE task_id = ?", ("2026-04-08T02:00:00+00:00", "task_archived_b"))
+        conn.execute("UPDATE tasks SET updated_at = ? WHERE task_id = ?", ("2026-04-08T01:00:00+00:00", "task_archived_c"))
+        conn.commit()
+
+    first = client.get(
+        "/tasks",
+        headers=auth_headers,
+        params={"user_id": "user-a", "status": "archived", "limit": 2},
+    )
+    assert first.status_code == 200, first.text
+    first_payload = first.json()
+    assert [task["task_id"] for task in first_payload["tasks"]] == ["task_archived_a", "task_archived_b"]
+    assert first_payload["page_info"]["has_more"] is True
+    assert first_payload["page_info"]["next_cursor"]
+
+    second = client.get(
+        "/tasks",
+        headers=auth_headers,
+        params={
+            "user_id": "user-a",
+            "status": "archived",
+            "limit": 2,
+            "cursor": first_payload["page_info"]["next_cursor"],
+        },
+    )
+    assert second.status_code == 200, second.text
+    second_payload = second.json()
+    assert [task["task_id"] for task in second_payload["tasks"]] == ["task_archived_c"]
+    assert second_payload["page_info"]["has_more"] is False
+    assert second_payload["page_info"]["next_cursor"] is None
 
 
 def test_tasks_list_rewrites_task_resolution_titles_and_keyword_soup_preview(client, auth_headers):
@@ -728,28 +885,22 @@ def test_tasks_list_rewrites_task_resolution_titles_and_keyword_soup_preview(cli
     assert task["summary_preview"] == "梳理待办、跟进与截止项"
 
 
-def test_task_normalize_archives_non_work_items_and_rewrites_titles(client, auth_headers):
-    client.post(
-        "/task-summaries",
-        headers=auth_headers,
-        json={
-            "user_id": "user-a",
-            "agent_id": "openclaw-ring",
-            "task_id": "task_cron-12345-watchdog",
-            "title": "[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
-            "summary": "NO_REPLY",
-        },
+def test_task_normalize_archives_non_work_items_and_rewrites_titles(client, auth_headers, backend_module):
+    backend_module.upsert_task(
+        task_id="task_cron-12345-watchdog",
+        user_id="user-a",
+        project_id=None,
+        title="[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
+        source_agent="openclaw-ring",
+        last_summary="NO_REPLY",
     )
-    client.post(
-        "/task-summaries",
-        headers=auth_headers,
-        json={
-            "user_id": "user-a",
-            "agent_id": "codex",
-            "task_id": "task_当前执行任务状态是什么",
-            "title": "当前执行任务状态是什么",
-            "summary": "当前执行任务状态是什么",
-        },
+    backend_module.upsert_task(
+        task_id="task_当前执行任务状态是什么",
+        user_id="user-a",
+        project_id=None,
+        title="当前执行任务状态是什么",
+        source_agent="codex",
+        last_summary="当前执行任务状态是什么",
     )
     client.post(
         "/task-summaries",
@@ -782,6 +933,109 @@ def test_task_normalize_archives_non_work_items_and_rewrites_titles(client, auth
     archived = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
     archived_index = {task["task_id"]: task for task in archived}
     assert archived_index["task_cron-12345-watchdog"]["title"] == "Mac OpenCode 孤儿进程巡检"
+
+
+def test_task_normalize_can_prune_archived_non_work_tasks_and_memory(client, auth_headers, backend_module):
+    backend_module.upsert_task(
+        task_id="task_cron-prune-me",
+        user_id="user-a",
+        project_id=None,
+        title="[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
+        source_agent="openclaw-ring",
+        last_summary="NO_REPLY",
+    )
+    archived = client.post("/tasks/task_cron-prune-me/archive", headers=auth_headers, json={"reason": "cleanup"})
+    assert archived.status_code == 200, archived.text
+
+    task_memory = backend_module.MEMORY_BACKEND.add(
+        [{"role": "user", "content": "NO_REPLY"}],
+        user_id="user-a",
+        run_id="task_cron-prune-me",
+        metadata={"domain": "task", "category": "handoff", "task_id": "task_cron-prune-me"},
+    )
+    backend_module.cache_memory_record(
+        memory_id=task_memory["id"],
+        text="NO_REPLY",
+        user_id="user-a",
+        run_id="task_cron-prune-me",
+        agent_id="openclaw-ring",
+        metadata={"domain": "task", "category": "handoff", "task_id": "task_cron-prune-me"},
+    )
+
+    response = client.post(
+        "/tasks/normalize",
+        headers=auth_headers,
+        json={
+            "user_id": "user-a",
+            "archive_non_work_active": False,
+            "prune_non_work_archived": True,
+            "dry_run": False,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["deleted_archived_non_work_tasks"] >= 1
+    assert payload["deleted_archived_non_work_memory"] >= 1
+
+    archived_tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
+    assert "task_cron-prune-me" not in {task["task_id"] for task in archived_tasks}
+
+    memories = client.get("/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_cron-prune-me"}).json()["results"]
+    assert memories == []
+
+
+def test_task_normalize_prune_keeps_task_when_memory_delete_fails(client, auth_headers, backend_module):
+    backend_module.upsert_task(
+        task_id="task_cron-prune-fails",
+        user_id="user-a",
+        project_id=None,
+        title="[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
+        source_agent="openclaw-ring",
+        last_summary="NO_REPLY",
+    )
+    archived = client.post("/tasks/task_cron-prune-fails/archive", headers=auth_headers, json={"reason": "cleanup"})
+    assert archived.status_code == 200, archived.text
+
+    task_memory = backend_module.MEMORY_BACKEND.add(
+        [{"role": "user", "content": "NO_REPLY"}],
+        user_id="user-a",
+        run_id="task_cron-prune-fails",
+        metadata={"domain": "task", "category": "handoff", "task_id": "task_cron-prune-fails"},
+    )
+    backend_module.cache_memory_record(
+        memory_id=task_memory["id"],
+        text="NO_REPLY",
+        user_id="user-a",
+        run_id="task_cron-prune-fails",
+        agent_id="openclaw-ring",
+        metadata={"domain": "task", "category": "handoff", "task_id": "task_cron-prune-fails"},
+    )
+
+    original_delete = backend_module.MEMORY_BACKEND.delete
+
+    def failing_delete(*, memory_id):
+        raise RuntimeError(f"cannot delete {memory_id}")
+
+    backend_module.MEMORY_BACKEND.delete = failing_delete
+    response = client.post(
+        "/tasks/normalize",
+        headers=auth_headers,
+        json={
+            "user_id": "user-a",
+            "archive_non_work_active": False,
+            "prune_non_work_archived": True,
+            "dry_run": False,
+        },
+    )
+    backend_module.MEMORY_BACKEND.delete = original_delete
+
+    assert response.status_code == 500
+
+    archived_tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
+    assert "task_cron-prune-fails" in {task["task_id"] for task in archived_tasks}
+
+    memories = client.get("/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_cron-prune-fails"}).json()["results"]
+    assert memories
 
 
 def test_agent_key_enforces_bound_agent_identity(client, auth_headers):
@@ -869,6 +1123,35 @@ def test_task_summaries_store_each_field_as_memory_message(client, auth_headers,
     assert captured
     assert all(isinstance(entry["messages"], list) for entry in captured)
     assert all(entry["messages"][0]["role"] == "user" for entry in captured)
+
+
+def test_task_summaries_skip_memory_for_system_task(client, auth_headers, backend_module):
+    captured: list[dict[str, object]] = []
+    original_add = backend_module.MEMORY_BACKEND.add
+
+    def recording_add(*, messages, **kwargs):
+        captured.append({"messages": messages, **kwargs})
+        return original_add(messages=messages, **kwargs)
+
+    backend_module.MEMORY_BACKEND.add = recording_add
+
+    response = client.post(
+        "/task-summaries",
+        headers=auth_headers,
+        json={
+            "user_id": "user-a",
+            "agent_id": "agent-alpha",
+            "task_id": "task_cron-daily",
+            "title": "[cron] daily monitor",
+            "summary": "[cron:daily] monitor lowendtalk",
+            "next_action": "Current time: 2026-04-07 10:00",
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["store_task_memory"] is False
+    assert payload["task_kind"] == "system"
+    assert captured == []
 
 
 def test_cache_rebuild_restores_index_for_existing_memories(client, auth_headers, backend_module):
@@ -963,7 +1246,10 @@ def test_non_admin_tasks_listing_without_user_id_uses_bound_default_user(client,
 
     response = client.get("/tasks", headers={"X-API-Key": token}, params={"status": "active"})
     assert response.status_code == 200, response.text
-    assert response.json() == {"tasks": []}
+    assert response.json() == {
+        "tasks": [],
+        "page_info": {"limit": 50, "has_more": False, "next_cursor": None},
+    }
 
 
 def test_admin_tasks_listing_defaults_to_recent_50_items(client, auth_headers, backend_module):
@@ -1074,7 +1360,7 @@ def test_metrics_reflect_route_activity(client, auth_headers):
     assert payload["routes"]["long_term"] >= 1
 
 
-def test_inferred_memory_writes_do_not_populate_cache_directly(client, auth_headers):
+def test_inferred_memory_writes_populate_cache_for_future_governance(client, auth_headers):
     response = client.post(
         "/memories",
         headers=auth_headers,
@@ -1089,7 +1375,87 @@ def test_inferred_memory_writes_do_not_populate_cache_directly(client, auth_head
 
     metrics = client.get("/metrics", headers=auth_headers)
     assert metrics.status_code == 200, metrics.text
-    assert metrics.json()["metrics"]["memory_cache"]["entries"] == 0
+    assert metrics.json()["metrics"]["memory_cache"]["entries"] == 1
+
+
+def test_metrics_expose_task_kind_and_memory_domain_breakdown(client, auth_headers, backend_module):
+    backend_module.upsert_task(
+        task_id="task_cron-12345-watchdog",
+        user_id="user-a",
+        project_id=None,
+        title="[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
+        source_agent="openclaw-ring",
+        last_summary="NO_REPLY",
+    )
+    backend_module.upsert_task(
+        task_id="task_work_clean",
+        user_id="user-a",
+        project_id="automem-demo",
+        title="优化前端管理界面",
+        source_agent="codex",
+        last_summary="完成了首页布局收敛。",
+    )
+    backend_module.MEMORY_BACKEND.add(
+        [{"role": "user", "content": "公司是Example Corp"}],
+        user_id="user-a",
+        metadata={"domain": "long_term", "category": "project_context"},
+    )
+    backend_module.cache_memory_record(
+        memory_id="mem_long_term_1",
+        text="公司是Example Corp",
+        user_id="user-a",
+        run_id=None,
+        agent_id="codex",
+        metadata={"domain": "long_term", "category": "project_context"},
+    )
+    backend_module.MEMORY_BACKEND.add(
+        [{"role": "user", "content": "下一步是检查前端管理界面"}],
+        user_id="user-a",
+        run_id="task_work_clean",
+        metadata={"domain": "task", "category": "next_action", "task_id": "task_work_clean"},
+    )
+    backend_module.cache_memory_record(
+        memory_id="mem_task_1",
+        text="下一步是检查前端管理界面",
+        user_id="user-a",
+        run_id="task_work_clean",
+        agent_id="codex",
+        metadata={"domain": "task", "category": "next_action", "task_id": "task_work_clean"},
+    )
+
+    metrics = client.get("/metrics", headers=auth_headers)
+    assert metrics.status_code == 200, metrics.text
+    payload = metrics.json()["metrics"]
+    assert payload["tasks"]["by_kind"]["work"] >= 1
+    assert payload["tasks"]["by_kind"]["system"] >= 1
+    assert payload["tasks"]["active_work"] >= 1
+    assert payload["tasks"]["active_non_work"] >= 1
+    assert payload["memory_cache"]["by_domain"]["long_term"] >= 1
+    assert payload["memory_cache"]["by_domain"]["task"] >= 1
+
+
+def test_infer_true_with_metadata_preserves_backend_infer_flag(client, auth_headers, backend_module):
+    observed: list[bool] = []
+    original_add = backend_module.MEMORY_BACKEND.add
+
+    def recording_add(messages, **params):
+        observed.append(bool(params.get("infer")))
+        return original_add(messages, **params)
+
+    backend_module.MEMORY_BACKEND.add = recording_add
+
+    response = client.post(
+        "/memories",
+        headers=auth_headers,
+        json={
+            "messages": [{"role": "user", "content": "keep infer semantics with metadata"}],
+            "user_id": "user-infer",
+            "infer": True,
+            "metadata": {"domain": "long_term", "category": "project_context"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert observed == [True]
 
 
 def test_audit_log_endpoint_returns_recent_events(client, auth_headers):

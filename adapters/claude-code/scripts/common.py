@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -154,7 +155,23 @@ def list_tasks(cfg: RuntimeConfig) -> list[dict[str, Any]]:
     return result.get("tasks", [])
 
 
-def capture_turn(cfg: RuntimeConfig, *, message: str, assistant_output: str, explicit_long_term: bool, task_like: bool) -> dict[str, Any]:
+def capture_turn(
+    cfg: RuntimeConfig,
+    *,
+    message: str,
+    assistant_output: str,
+    explicit_long_term: bool,
+    task_like: bool,
+    session_id: str | None = None,
+    channel: str | None = None,
+) -> dict[str, Any]:
+    if should_skip_capture(message, assistant_output):
+        return {"status": "skipped", "reason": "noise"}
+    scope_key = capture_scope_key(session_id)
+    fingerprint = build_capture_fingerprint(message, assistant_output)
+    if is_duplicate_capture(cfg, scope_key=scope_key, fingerprint=fingerprint):
+        return {"status": "skipped", "reason": "duplicate"}
+
     if cfg.cli_path:
         args = [
             "capture",
@@ -171,11 +188,17 @@ def capture_turn(cfg: RuntimeConfig, *, message: str, assistant_output: str, exp
         ]
         if cfg.memory_project_id:
             args.extend(["--project-id", cfg.memory_project_id])
+        if session_id:
+            args.extend(["--session-id", session_id])
+        if channel:
+            args.extend(["--channel", channel])
         if explicit_long_term:
             args.append("--explicit-long-term")
         if task_like:
             args.append("--task-like")
-        return _run_cli(cfg, args)
+        result = _run_cli(cfg, args)
+        mark_capture_success(cfg, scope_key=scope_key, fingerprint=fingerprint)
+        return result
 
     payload = {
         "user_id": cfg.memory_user_id,
@@ -183,6 +206,8 @@ def capture_turn(cfg: RuntimeConfig, *, message: str, assistant_output: str, exp
         "project_id": cfg.memory_project_id,
         "message": message,
         "assistant_output": assistant_output,
+        "session_id": session_id,
+        "channel": channel,
         "client_hints": {
             "explicit_long_term": explicit_long_term,
             "task_like": task_like,
@@ -209,6 +234,8 @@ def capture_turn(cfg: RuntimeConfig, *, message: str, assistant_output: str, exp
                 "progress": summary.get("progress"),
                 "blocker": summary.get("blocker"),
                 "next_action": summary.get("next_action"),
+                "session_id": session_id,
+                "channel": channel,
             },
         )
     if routed.get("route") in {"long_term", "mixed"}:
@@ -230,6 +257,7 @@ def capture_turn(cfg: RuntimeConfig, *, message: str, assistant_output: str, exp
                     },
                 },
             )
+    mark_capture_success(cfg, scope_key=scope_key, fingerprint=fingerprint)
     return routed
 
 
@@ -247,6 +275,8 @@ def token_overlap_score(query: str, text: str) -> float:
 def pick_relevant_tasks(prompt: str, tasks: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
     scored = []
     for task in tasks:
+        if str(task.get("task_kind") or "work") != "work":
+            continue
         text = " ".join(
             part
             for part in [
@@ -257,7 +287,7 @@ def pick_relevant_tasks(prompt: str, tasks: list[dict[str, Any]], limit: int = 3
             if part
         )
         score = token_overlap_score(prompt, text)
-        if score > 0:
+        if score >= 0.18:
             scored.append((score, task))
     scored.sort(key=lambda item: item[0], reverse=True)
     return [task for _, task in scored[:limit]]
@@ -309,13 +339,99 @@ def looks_explicit_long_term(text: str) -> bool:
 
 
 def looks_task_like(user_text: str, assistant_text: str) -> bool:
-    text = f"{user_text}\n{assistant_text}".lower()
-    return bool(
-        re.search(
-            r"继续|实现|修复|分析|排查|部署|任务|下一步|blocker|next step|fix|implement|deploy|continue|task",
-            text,
-        )
+    user = normalize_text(user_text).lower()
+    assistant = normalize_text(assistant_text).lower()
+    if not user and not assistant:
+        return False
+    if looks_explicit_long_term(user):
+        return False
+    if is_system_noise_text(user) or is_system_noise_text(assistant):
+        return False
+    if re.search(r"下一步|阻塞|待办|里程碑|\b(next step|next action|blocker|blocked|todo|milestone)\b", assistant):
+        return True
+    work_intent = re.search(
+        r"继续|实现|修复|分析|排查|部署|测试|重构|优化|\b(fix|implement|debug|deploy|refactor|optimi[sz]e|test)\b",
+        user,
     )
+    progress_signal = re.search(r"已完成|完成了|已修复|已更新|\b(completed|implemented|fixed|updated|shipped)\b", assistant)
+    return bool(work_intent and progress_signal)
+
+
+def normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_system_noise_text(text: str) -> bool:
+    normalized = normalize_text(text).lower()
+    if not normalized:
+        return True
+    return (
+        normalized.startswith("[cron:")
+        or normalized.startswith("conversation info (untrusted metadata)")
+        or normalized.startswith("system:")
+        or normalized == "no_reply"
+        or "[[reply_to_current]]" in normalized
+    )
+
+
+def should_skip_capture(message: str, assistant_output: str) -> bool:
+    user = normalize_text(message)
+    assistant = normalize_text(assistant_output)
+    if not user or not assistant:
+        return True
+    if len(user) < 4 or len(assistant) < 4:
+        return True
+    if is_system_noise_text(user) or is_system_noise_text(assistant):
+        return True
+    return False
+
+
+def capture_state_path(cfg: RuntimeConfig) -> Path:
+    return cfg.plugin_data_dir / "capture-state.json"
+
+
+def load_capture_state(cfg: RuntimeConfig) -> dict[str, Any]:
+    path = capture_state_path(cfg)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_capture_state(cfg: RuntimeConfig, state: dict[str, Any]) -> None:
+    capture_state_path(cfg).write_text(json.dumps(state, ensure_ascii=False))
+
+
+def capture_scope_key(session_id: str | None) -> str:
+    return normalize_text(session_id or "") or "__global__"
+
+
+def build_capture_fingerprint(message: str, assistant_output: str) -> str:
+    fingerprint_source = f"{normalize_text(message)}\n---\n{normalize_text(assistant_output)}"
+    return hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
+
+
+def is_duplicate_capture(cfg: RuntimeConfig, *, scope_key: str, fingerprint: str) -> bool:
+    state = load_capture_state(cfg)
+    last_by_scope = state.get("last_fingerprint_by_scope")
+    if isinstance(last_by_scope, dict) and last_by_scope.get(scope_key) == fingerprint:
+        return True
+    if scope_key == "__global__" and state.get("last_fingerprint") == fingerprint:
+        return True
+    return False
+
+
+def mark_capture_success(cfg: RuntimeConfig, *, scope_key: str, fingerprint: str) -> None:
+    state = load_capture_state(cfg)
+    last_by_scope = state.get("last_fingerprint_by_scope")
+    if not isinstance(last_by_scope, dict):
+        last_by_scope = {}
+    last_by_scope[scope_key] = fingerprint
+    state["last_fingerprint_by_scope"] = last_by_scope
+    state["last_fingerprint"] = fingerprint
+    save_capture_state(cfg, state)
 
 
 def print_additional_context(text: str, *, hook_event_name: str) -> None:

@@ -37,6 +37,16 @@ def test_install_adapter_force_replaces_existing_target(tmp_path: Path) -> None:
     assert (target / "package.json").exists()
 
 
+def test_install_adapter_force_preserves_existing_env(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    target.mkdir()
+    (target / ".env").write_text("MEMORY_URL=http://example\nMEMORY_API_KEY=secret\n", encoding="utf-8")
+
+    install_adapter("codex", target, force=True, copy_env_example=True)
+
+    assert (target / ".env").read_text(encoding="utf-8") == "MEMORY_URL=http://example\nMEMORY_API_KEY=secret\n"
+
+
 def test_supported_adapters_are_backed_by_real_directories() -> None:
     missing = [name for name, path in SUPPORTED_ADAPTERS.items() if not path.exists()]
     assert missing == []

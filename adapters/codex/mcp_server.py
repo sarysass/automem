@@ -213,6 +213,8 @@ def _store_route_result(
     project_id: str | None,
     message: str,
     assistant_output: str | None,
+    session_id: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     stored_long_term: list[dict[str, Any]] = []
     stored_task: dict[str, Any] | None = None
@@ -251,6 +253,8 @@ def _store_route_result(
             next_action=summary.get("next_action"),
             message=message,
             assistant_output=assistant_output,
+            session_id=session_id,
+            channel=channel,
         )
 
     return {
@@ -282,6 +286,8 @@ def memory_search(
     agent_id: str | None = None,
     project_id: str | None = None,
     category: str | None = None,
+    session_id: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     defaults = _defaults()
     effective_user_id = user_id or defaults["user_id"]
@@ -296,6 +302,8 @@ def memory_search(
             message=query,
             agent_id=effective_agent_id,
             project_id=effective_project_id,
+            session_id=session_id,
+            channel=channel,
         )
         task_id = resolution.get("task_id")
         if resolution.get("action") == "no_task" or not task_id:
@@ -383,20 +391,35 @@ def memory_store(
     if domain == "long_term":
         entries = _extract_long_term_entries(text, category)
         if not entries:
-            entries = [{"text": text, "category": category or "project_context"}]
-        stored = []
+            normalized = _normalize_text(text)
+            if not normalized:
+                raise ValueError("text must not be empty")
+            entries = [{"text": normalized, "category": category}] if category else [{"text": normalized}]
+
+        responses: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for entry in entries:
             entry_metadata = dict(metadata)
-            entry_metadata["category"] = entry["category"]
-            stored.append(
-                client.store(
-                    text=entry["text"],
-                    user_id=effective_user_id,
-                    metadata=entry_metadata,
-                    infer=False,
-                )
+            entry_category = entry.get("category")
+            if entry_category:
+                entry_metadata["category"] = entry_category
+            response = client.store(
+                text=entry["text"],
+                user_id=effective_user_id,
+                metadata=entry_metadata,
+                infer=False,
             )
-        return {"stored": stored, "count": len(stored)}
+            responses.append(response)
+            results.extend(response.get("results", []))
+
+        if len(responses) == 1:
+            return responses[0]
+        return {
+            "status": "stored" if results else "skipped",
+            "results": results,
+            "stored_count": len(results),
+            "responses": responses,
+        }
     if domain == "agent":
         return client.store(
             text=text,
@@ -430,7 +453,9 @@ def memory_route(
     agent_id: str | None = None,
     project_id: str | None = None,
     explicit_long_term: bool = False,
-    task_like: bool = False,
+    task_like: bool | None = None,
+    session_id: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     defaults = _defaults()
     return client.memory_route(
@@ -439,10 +464,12 @@ def memory_route(
         agent_id=agent_id or defaults["agent_id"],
         project_id=project_id or defaults["project_id"],
         assistant_output=assistant_output,
+        session_id=session_id,
+        channel=channel,
         client_hints={
             "explicit_long_term": explicit_long_term,
-            "task_like": task_like,
             "source": "codex",
+            **({"task_like": True} if task_like is True else {}),
         },
     )
 
@@ -458,7 +485,9 @@ def memory_capture(
     agent_id: str | None = None,
     project_id: str | None = None,
     explicit_long_term: bool = False,
-    task_like: bool = False,
+    task_like: bool | None = None,
+    session_id: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     defaults = _defaults()
     effective_user_id = user_id or defaults["user_id"]
@@ -470,10 +499,12 @@ def memory_capture(
         agent_id=effective_agent_id,
         project_id=effective_project_id,
         assistant_output=assistant_output,
+        session_id=session_id,
+        channel=channel,
         client_hints={
             "explicit_long_term": explicit_long_term,
-            "task_like": task_like,
             "source": "codex",
+            **({"task_like": True} if task_like is True else {}),
         },
     )
     if route_result.get("route") == "drop":
@@ -485,6 +516,8 @@ def memory_capture(
         project_id=effective_project_id,
         message=message,
         assistant_output=assistant_output,
+        session_id=session_id,
+        channel=channel,
     )
 
 
@@ -495,6 +528,8 @@ def task_resolve(
     user_id: str | None = None,
     agent_id: str | None = None,
     project_id: str | None = None,
+    session_id: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     defaults = _defaults()
     return client.resolve_task(
@@ -503,6 +538,8 @@ def task_resolve(
         agent_id=agent_id or defaults["agent_id"],
         project_id=project_id or defaults["project_id"],
         assistant_output=assistant_output,
+        session_id=session_id,
+        channel=channel,
     )
 
 
@@ -519,6 +556,8 @@ def task_summary_store(
     user_id: str | None = None,
     agent_id: str | None = None,
     project_id: str | None = None,
+    session_id: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     defaults = _defaults()
     return client.store_task_summary(
@@ -533,6 +572,8 @@ def task_summary_store(
         next_action=next_action,
         message=message,
         assistant_output=assistant_output,
+        session_id=session_id,
+        channel=channel,
     )
 
 
@@ -541,12 +582,16 @@ def task_list(
     user_id: str | None = None,
     project_id: str | None = None,
     status: str | None = "active",
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> dict[str, Any]:
     defaults = _defaults()
     return client.list_tasks(
         user_id=user_id or defaults["user_id"],
         project_id=project_id or defaults["project_id"],
         status=status,
+        limit=limit,
+        cursor=cursor,
     )
 
 

@@ -16,6 +16,8 @@ EXPECTED_KEYS = {
     "canonicalized_long_term_count",
     "deleted_noise_count",
     "archived_tasks_count",
+    "normalized_tasks_count",
+    "task_reclassified_count",
 }
 
 
@@ -58,6 +60,8 @@ def build_payload() -> dict[str, Any]:
         "dry_run": env_flag("MEMORY_CONSOLIDATE_DRY_RUN", False),
         "dedupe_long_term": env_flag("MEMORY_CONSOLIDATE_DEDUPE_LONG_TERM", True),
         "archive_closed_tasks": env_flag("MEMORY_CONSOLIDATE_ARCHIVE_CLOSED_TASKS", True),
+        "normalize_task_state": env_flag("MEMORY_CONSOLIDATE_NORMALIZE_TASK_STATE", True),
+        "prune_non_work_archived": env_flag("MEMORY_CONSOLIDATE_PRUNE_NON_WORK_ARCHIVED", False),
         "user_id": os.environ.get("MEMORY_CONSOLIDATE_USER_ID") or None,
         "project_id": os.environ.get("MEMORY_CONSOLIDATE_PROJECT_ID") or None,
     }

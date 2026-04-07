@@ -8,6 +8,7 @@ from common import (
     list_tasks,
     load_config,
     load_hook_input,
+    load_last_prompt,
     pick_relevant_tasks,
     print_additional_context,
     save_last_prompt,
@@ -17,11 +18,18 @@ from common import (
 
 def build_session_start_context() -> str:
     cfg = load_config()
-    tasks = list_tasks(cfg)
+    return build_session_start_context_from_hook({})
+
+
+def build_session_start_context_from_hook(hook_input: dict) -> str:
+    cfg = load_config()
+    session_id = str(hook_input.get("session_id") or "")
+    recent_prompt = load_last_prompt(cfg, session_id) if session_id else None
+    tasks = pick_relevant_tasks(recent_prompt or "", list_tasks(cfg)) if recent_prompt else []
     if not cfg.memory_project_id:
-        return format_recall_context([], tasks[:3])
+        return format_recall_context([], tasks)
     memories = search_memories(cfg, f"{cfg.memory_project_id} context rules architecture", domain="long_term")
-    return format_recall_context(memories, tasks[:3])
+    return format_recall_context(memories, tasks)
 
 
 def build_user_prompt_context(hook_input: dict) -> str:
@@ -41,7 +49,7 @@ def main() -> None:
     args = parser.parse_args()
     hook_input = load_hook_input()
     if args.mode == "session-start":
-        context = build_session_start_context()
+        context = build_session_start_context_from_hook(hook_input)
         hook_event_name = "SessionStart"
     else:
         context = build_user_prompt_context(hook_input)

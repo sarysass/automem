@@ -83,10 +83,10 @@ def backend_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     monkeypatch.setenv("QDRANT_HOST", "127.0.0.1")
     monkeypatch.setenv("QDRANT_PORT", "6333")
-    monkeypatch.setenv("QDRANT_COLLECTION", "test-mem0")
+    monkeypatch.setenv("QDRANT_COLLECTION", "test-automem")
     monkeypatch.setenv("HISTORY_DB_PATH", str(tmp_path / "history.db"))
 
-    spec = importlib.util.spec_from_file_location(f"memory_platform_backend_{tmp_path.name}", module_path)
+    spec = importlib.util.spec_from_file_location(f"automem_backend_{tmp_path.name}", module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     sys.modules[spec.name] = module

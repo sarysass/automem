@@ -109,3 +109,10 @@ def test_typescript_adapters_define_validation_scripts() -> None:
         scripts = data.get("scripts") or {}
         assert "typecheck" in scripts
         assert "smoke" in scripts
+
+
+def test_pyproject_declares_runtime_dependency_for_ollama_embedder() -> None:
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    backend = (REPO_ROOT / "backend/main.py").read_text(encoding="utf-8")
+    if '"provider": "ollama"' in backend:
+        assert '"ollama' in pyproject or "'ollama" in pyproject

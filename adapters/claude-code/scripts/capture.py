@@ -36,6 +36,8 @@ def main() -> None:
         assistant_output=assistant_output,
         explicit_long_term=explicit_long_term,
         task_like=task_like,
+        session_id=session_id,
+        channel="claude-code/Stop",
     )
 
     log_dir = cfg.plugin_data_dir / "capture-logs"

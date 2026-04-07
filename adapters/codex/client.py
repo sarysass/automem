@@ -209,12 +209,18 @@ class AutomemClient:
         user_id: str,
         project_id: str | None = None,
         status: str | None = "active",
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"user_id": user_id}
         if project_id is not None:
             params["project_id"] = project_id
         if status is not None:
             params["status"] = status
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
         response = self._client.get("/tasks", params=params)
         response.raise_for_status()
         return response.json()

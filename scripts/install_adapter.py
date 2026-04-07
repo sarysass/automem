@@ -20,7 +20,7 @@ DEFAULT_TARGETS = {
     "opencode": "~/.config/opencode/plugins/automem",
     "claude-code": "~/.claude/plugins/automem-shared-memory",
 }
-SKIP_NAMES = {"node_modules", "dist", "__pycache__", ".pytest_cache", ".ruff_cache"}
+SKIP_NAMES = {"node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,7 +51,11 @@ def copy_tree(src: Path, dst: Path) -> None:
 
 def install_adapter(adapter: str, target: Path, *, force: bool, copy_env_example: bool) -> None:
     source = SUPPORTED_ADAPTERS[adapter]
+    preserved_env: str | None = None
     if target.exists():
+        env_file = target / ".env"
+        if env_file.exists():
+            preserved_env = env_file.read_text(encoding="utf-8")
         if not force:
             raise FileExistsError(f"Target already exists: {target}")
         shutil.rmtree(target)
@@ -60,6 +64,8 @@ def install_adapter(adapter: str, target: Path, *, force: bool, copy_env_example
 
     env_example = target / ".env.example"
     env_file = target / ".env"
+    if preserved_env is not None and not env_file.exists():
+        env_file.write_text(preserved_env, encoding="utf-8")
     if copy_env_example and env_example.exists() and not env_file.exists():
         shutil.copy2(env_example, env_file)
 

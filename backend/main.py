@@ -1,3 +1,4 @@
+import base64
 import json
 import hashlib
 import logging
@@ -5,6 +6,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,27 +26,72 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 
-try:
-    from mem0 import Memory
-except ImportError:  # pragma: no cover - optional in local tests
-    Memory = None
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+BACKEND_DIR = Path(__file__).resolve().parent
 
 
-def load_runtime_env() -> None:
+def bootstrap_runtime_env() -> None:
     explicit = os.environ.get("AUTOMEM_ENV_FILE")
     candidates = []
     if explicit:
         candidates.append(Path(explicit))
-    candidates.append(Path(__file__).with_name(".env"))
+    candidates.append(BACKEND_DIR / ".env")
     for candidate in candidates:
         if candidate.exists():
             load_dotenv(candidate)
             break
+    os.environ.setdefault("MEM0_TELEMETRY", "False")
 
 
-load_runtime_env()
+bootstrap_runtime_env()
+
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from governance import (
+    apply_hard_rules,
+    build_long_term_duplicate_key,
+    canonicalize_preference_text as governance_canonicalize_preference_text,
+    classify_task_kind as governance_classify_task_kind,
+    filter_task_memory_fields,
+    is_query_like_long_term_text as governance_is_query_like_long_term_text,
+    judge_route,
+    judge_text,
+    should_materialize_task as governance_should_materialize_task,
+    should_run_offline_judge,
+    should_store_task_memory,
+)
+from governance.schemas import RouteDecision, TextDecision
+
+try:
+    from mem0 import Memory
+except ImportError:  # pragma: no cover - optional in local tests
+    Memory = None
+try:
+    from mem0.vector_stores.qdrant import Qdrant as Mem0Qdrant
+except ImportError:  # pragma: no cover - optional in local tests
+    Mem0Qdrant = None
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+def patch_mem0_qdrant_indexes() -> None:
+    if Mem0Qdrant is None:
+        return
+    disable_indexes = os.environ.get("AUTOMEM_DISABLE_QDRANT_PAYLOAD_INDEXES", "false").lower() in {"1", "true", "yes"}
+    if not disable_indexes:
+        return
+    if getattr(Mem0Qdrant, "_automem_indexes_patched", False):
+        return
+    patch_logger = logging.getLogger(__name__)
+
+    def _skip_filter_indexes(self) -> None:  # type: ignore[override]
+        patch_logger.info("Skipping mem0 Qdrant payload index creation for collection %s", self.collection_name)
+
+    Mem0Qdrant._create_filter_indexes = _skip_filter_indexes  # type: ignore[assignment]
+    Mem0Qdrant._automem_indexes_patched = True  # type: ignore[attr-defined]
+
+
+patch_mem0_qdrant_indexes()
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
@@ -165,6 +212,8 @@ class ConsolidateRequest(BaseModel):
     dry_run: bool = True
     dedupe_long_term: bool = True
     archive_closed_tasks: bool = True
+    normalize_task_state: bool = True
+    prune_non_work_archived: bool = False
     user_id: Optional[str] = None
     project_id: Optional[str] = None
 
@@ -191,6 +240,7 @@ class TaskNormalizeRequest(BaseModel):
     user_id: Optional[str] = None
     project_id: Optional[str] = None
     archive_non_work_active: bool = True
+    prune_non_work_archived: bool = False
 
 
 def utcnow_iso() -> str:
@@ -201,7 +251,7 @@ def get_memory_backend():
     global MEMORY_BACKEND
     if MEMORY_BACKEND is None:
         if Memory is None:
-            raise RuntimeError("mem0 package is not installed")
+            raise RuntimeError("memory backend package is not installed")
         MEMORY_BACKEND = Memory.from_config(CONFIG)
     return MEMORY_BACKEND
 
@@ -291,8 +341,14 @@ def infer_long_term_category(text: str) -> Optional[str]:
     return None
 
 
+def is_query_like_long_term_text(text: str) -> bool:
+    return governance_is_query_like_long_term_text(text)
+
+
 def canonicalize_explicit_long_term_item(item: str) -> list[dict[str, str]]:
     text = normalize_text(re.sub(r"^(请记住|记住)[:：]?\s*", "", item))
+    if is_query_like_long_term_text(text):
+        return []
     out: list[dict[str, str]] = []
 
     def add(text_value: str, category: str) -> None:
@@ -340,6 +396,8 @@ def extract_long_term_entries(text: str) -> list[dict[str, str]]:
     else:
         candidates = split_sentences(normalized) or [normalized]
         for candidate in candidates:
+            if is_query_like_long_term_text(candidate):
+                continue
             inferred = infer_long_term_category(candidate)
             if inferred:
                 entries.append({"text": candidate, "category": inferred})
@@ -381,34 +439,7 @@ def is_preference_noise_text(text: str) -> bool:
 
 
 def canonicalize_preference_text(text: str) -> str:
-    normalized = normalize_text(text)
-    lower = normalized.lower()
-
-    language_patterns = (
-        r"偏好使用中文沟通",
-        r"偏好中文沟通",
-        r"请用中文",
-        r"使用中文沟通",
-        r"中文沟通",
-        r"prefers? communication in chinese",
-        r"prefers? chinese communication",
-        r"prefer[s]? .*chinese",
-        r"communicat\w* .*chinese",
-    )
-    style_patterns = (
-        r"偏好简洁直接的总结",
-        r"简洁直接的总结",
-        r"喜欢简洁直接的总结",
-        r"likes? concise,? direct summaries",
-        r"prefers? concise,? direct summaries",
-        r"concise,? direct summaries",
-    )
-
-    if any(re.search(pattern, lower, re.I) for pattern in language_patterns):
-        return "偏好使用中文沟通"
-    if any(re.search(pattern, lower, re.I) for pattern in style_patterns):
-        return "偏好简洁直接的总结"
-    return normalized
+    return governance_canonicalize_preference_text(text)
 
 
 def is_task_noise_text(text: str) -> bool:
@@ -420,27 +451,75 @@ def is_task_noise_text(text: str) -> bool:
     return "[[reply_to_current]]" in normalized
 
 
-def govern_memory_text(text: str, metadata: Optional[dict[str, Any]]) -> dict[str, Any]:
+def fallback_text_decision(text: str, metadata: Optional[dict[str, Any]]) -> TextDecision:
     normalized = normalize_text(text)
     meta = metadata or {}
     domain = str(meta.get("domain") or "")
     category = str(meta.get("category") or "")
 
     if not normalized:
-        return {"action": "skip", "reason": "empty", "text": ""}
+        return TextDecision(action="drop", canonical_text="", reason="fallback_empty", confidence=1.0)
     if domain == "task" and is_task_noise_text(normalized):
-        return {"action": "skip", "reason": "noise", "text": normalized}
+        return TextDecision(
+            action="drop",
+            canonical_text="",
+            reason="fallback_task_noise",
+            confidence=0.98,
+            noise_kind="assistant_chatter",
+            store_task_memory=False,
+        )
     if domain == "long_term" and category == "preference":
         if is_preference_noise_text(normalized):
-            return {"action": "skip", "reason": "noise", "text": normalized}
+            return TextDecision(
+                action="drop",
+                canonical_text="",
+                reason="fallback_preference_noise",
+                confidence=0.95,
+                noise_kind="transient_instruction",
+            )
         canonical = canonicalize_preference_text(normalized)
-        return {
-            "action": "store",
-            "reason": "canonicalized" if canonical != normalized else "accepted",
-            "text": canonical,
-            "canonicalized": canonical != normalized,
-        }
-    return {"action": "store", "reason": "accepted", "text": normalized, "canonicalized": False}
+        return TextDecision(
+            action="rewrite" if canonical != normalized else "store",
+            canonical_text=canonical,
+            reason="fallback_preference_canonicalized" if canonical != normalized else "fallback_preference_accept",
+            confidence=0.9,
+            memory_kind="preference",
+        )
+    return TextDecision(
+        action="store",
+        canonical_text=normalized,
+        reason="fallback_accept",
+        confidence=0.6,
+        memory_kind=category or infer_long_term_category(normalized),
+    )
+
+
+def govern_text_decision(text: str, metadata: Optional[dict[str, Any]], *, origin: str = "memory_store") -> TextDecision:
+    normalized = normalize_text(text)
+    hard_rule = apply_hard_rules(normalized, metadata, origin=origin)
+    if hard_rule is not None:
+        return hard_rule
+    return judge_text(
+        text=normalized,
+        metadata=metadata,
+        origin=origin,
+        fallback=lambda: fallback_text_decision(normalized, metadata),
+    )
+
+
+def govern_memory_text(text: str, metadata: Optional[dict[str, Any]], *, origin: str = "memory_store") -> dict[str, Any]:
+    decision = govern_text_decision(text, metadata, origin=origin)
+    return {
+        "action": "skip" if decision.action == "drop" else "store",
+        "reason": "noise" if decision.action == "drop" and decision.noise_kind else decision.reason,
+        "text": decision.canonical_text,
+        "canonicalized": decision.action == "rewrite",
+        "noise_kind": decision.noise_kind,
+        "confidence": decision.confidence,
+        "from_llm": decision.from_llm,
+        "store_task_memory": decision.store_task_memory,
+        "memory_kind": decision.memory_kind,
+    }
 
 
 def find_cached_duplicate_memory_id(
@@ -494,24 +573,56 @@ def store_memory_with_governance(
     infer: bool,
 ) -> dict[str, Any]:
     backend = get_memory_backend()
-    if infer:
-        result = backend.add(messages=messages, user_id=user_id, run_id=run_id, agent_id=agent_id, metadata=metadata, infer=True)
-        return result
-
     raw_text = extract_primary_message_text([Message(**message) for message in messages])
-    governed = govern_memory_text(raw_text, metadata)
+    governed = govern_memory_text(raw_text, metadata, origin="memory_store")
     if governed["action"] == "skip":
-        return {"status": "skipped", "reason": governed["reason"], "results": []}
+        return {
+            "status": "skipped",
+            "reason": governed["reason"],
+            "noise_kind": governed.get("noise_kind"),
+            "judge": "llm" if governed.get("from_llm") else "heuristic",
+            "results": [],
+        }
 
     stored_text = str(governed["text"])
-    meta = metadata or {}
+    meta = dict(metadata or {})
+    if str(meta.get("domain") or "") == "long_term" and not meta.get("category") and governed.get("memory_kind"):
+        candidate_category = str(governed["memory_kind"])
+        if candidate_category in {"user_profile", "preference", "project_rule", "project_context", "architecture_decision"}:
+            meta["category"] = candidate_category
+
+    if infer:
+        result = backend.add(
+            messages=[{"role": "user", "content": stored_text}],
+            user_id=user_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            metadata=meta,
+            infer=True,
+        )
+        memory_id = extract_memory_id(result)
+        if memory_id:
+            cache_memory_record(
+                memory_id=memory_id,
+                text=stored_text,
+                user_id=user_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                metadata=meta,
+            )
+        if governed.get("canonicalized"):
+            result["status"] = "stored"
+            result["canonicalized_from"] = raw_text
+        result["judge"] = "llm" if governed.get("from_llm") else "heuristic"
+        return result
+
     if str(meta.get("domain") or "") == "long_term" and str(meta.get("category") or "") == "preference":
         duplicate_id = find_cached_duplicate_memory_id(
             text=stored_text,
             user_id=user_id,
             run_id=run_id,
             agent_id=agent_id,
-            metadata=metadata,
+            metadata=meta,
         )
         if duplicate_id:
             return {"status": "skipped", "reason": "duplicate", "existing_memory_id": duplicate_id, "results": []}
@@ -521,7 +632,7 @@ def store_memory_with_governance(
         user_id=user_id,
         run_id=run_id,
         agent_id=agent_id,
-        metadata=metadata,
+        metadata=meta,
         infer=False,
     )
     memory_id = extract_memory_id(result)
@@ -532,11 +643,12 @@ def store_memory_with_governance(
             user_id=user_id,
             run_id=run_id,
             agent_id=agent_id,
-            metadata=metadata,
+            metadata=meta,
         )
     if governed.get("canonicalized"):
         result["status"] = "stored"
         result["canonicalized_from"] = raw_text
+    result["judge"] = "llm" if governed.get("from_llm") else "heuristic"
     return result
 
 
@@ -627,10 +739,50 @@ def route_memory(payload: MemoryRouteRequest) -> dict[str, Any]:
     if not long_term_entries and hints.get("explicit_long_term"):
         long_term_entries = extract_long_term_entries(assistant)
 
-    task_like = bool(hints.get("task_like")) or looks_task_worthy(message, assistant)
+    heuristic_task_like = bool(hints.get("task_like")) or looks_task_worthy(message, assistant)
+
+    def fallback_route_decision() -> RouteDecision:
+        if long_term_entries and heuristic_task_like:
+            return RouteDecision(
+                route="mixed",
+                reason="heuristic_mixed",
+                confidence=0.72,
+            )
+        if long_term_entries:
+            return RouteDecision(
+                route="long_term",
+                reason="heuristic_long_term",
+                confidence=0.86,
+            )
+        if heuristic_task_like:
+            return RouteDecision(
+                route="task",
+                reason="heuristic_task",
+                confidence=0.68,
+            )
+        return RouteDecision(
+            route="drop",
+            reason="heuristic_drop",
+            confidence=0.88,
+        )
+
+    route_decision = judge_route(
+        message=message,
+        assistant_output=assistant,
+        hints=hints,
+        long_term_entries=long_term_entries,
+        task_like=heuristic_task_like,
+        fallback=fallback_route_decision,
+    )
+
+    if route_decision.route in {"long_term", "mixed"} and not long_term_entries:
+        fallback = fallback_route_decision()
+        if fallback.route in {"long_term", "mixed"}:
+            long_term_entries = extract_long_term_entries(message or assistant)
+
     task_result: Optional[dict[str, Any]] = None
 
-    if task_like:
+    if route_decision.route in {"task", "mixed"}:
         resolution = resolve_task(
             TaskResolutionRequest(
                 user_id=payload.user_id,
@@ -643,44 +795,70 @@ def route_memory(payload: MemoryRouteRequest) -> dict[str, Any]:
             )
         )
         if resolution["action"] != "no_task":
-            structured = derive_task_summary(
-                TaskSummaryWriteRequest(
-                    user_id=payload.user_id,
-                    agent_id=payload.agent_id,
-                    project_id=payload.project_id,
-                    task_id=resolution["task_id"],
-                    title=resolution.get("title"),
-                    message=message,
-                    assistant_output=assistant,
-                )
+            task_payload = TaskSummaryWriteRequest(
+                user_id=payload.user_id,
+                agent_id=payload.agent_id,
+                project_id=payload.project_id,
+                task_id=resolution["task_id"],
+                title=resolution.get("title"),
+                message=message,
+                assistant_output=assistant,
             )
-            task_result = {
-                "task_id": resolution["task_id"],
-                "title": resolution.get("title"),
-                "summary": structured,
-                "resolution": resolution,
-            }
+            structured = derive_task_summary(task_payload)
+            should_materialize, task_kind, _ = evaluate_task_materialization(
+                task_id=resolution["task_id"],
+                title=resolution.get("title"),
+                payload=task_payload,
+                structured=structured,
+            )
+            if should_materialize:
+                task_result = {
+                    "task_id": resolution["task_id"],
+                    "title": resolution.get("title"),
+                    "summary": structured,
+                    "resolution": resolution,
+                    "task_kind": task_kind,
+                }
 
-    if long_term_entries and task_result:
+    if route_decision.route == "mixed" and long_term_entries and task_result:
         return {
             "route": "mixed",
             "long_term": long_term_entries,
             "task": task_result,
-            "reason": "Contains both durable long-term context and task-state information",
+            "reason": route_decision.reason,
+            "confidence": route_decision.confidence,
+            "judge": "llm" if route_decision.from_llm else "heuristic",
         }
-    if long_term_entries:
+    if route_decision.route == "mixed" and long_term_entries:
         return {
             "route": "long_term",
             "entries": long_term_entries,
-            "reason": "Contains durable cross-task information",
+            "reason": route_decision.reason,
+            "confidence": route_decision.confidence,
+            "judge": "llm" if route_decision.from_llm else "heuristic",
         }
-    if task_result:
+    if route_decision.route == "long_term" and long_term_entries:
+        return {
+            "route": "long_term",
+            "entries": long_term_entries,
+            "reason": route_decision.reason,
+            "confidence": route_decision.confidence,
+            "judge": "llm" if route_decision.from_llm else "heuristic",
+        }
+    if route_decision.route == "task" and task_result:
         return {
             "route": "task",
             "task": task_result,
-            "reason": "Contains task-oriented execution state",
+            "reason": route_decision.reason,
+            "confidence": route_decision.confidence,
+            "judge": "llm" if route_decision.from_llm else "heuristic",
         }
-    return {"route": "drop", "reason": "No durable memory worth storing"}
+    return {
+        "route": "drop",
+        "reason": route_decision.reason,
+        "confidence": route_decision.confidence,
+        "judge": "llm" if route_decision.from_llm else "heuristic",
+    }
 
 
 def task_tokens(text: str) -> set[str]:
@@ -1023,32 +1201,13 @@ def classify_task_kind(
     source_agent: Optional[str],
     project_id: Optional[str],
 ) -> str:
-    haystack = " ".join(part for part in [task_id or "", title or "", last_summary or "", source_agent or ""] if part)
-    lowered = normalize_text(haystack).lower()
-    if not lowered:
-        return "work"
-    if task_id and str(task_id).startswith("task_cron-"):
-        return "system"
-    if "watchdog" in lowered or "monitor lowendtalk" in lowered or "cron:" in lowered:
-        return "system"
-    if "conversation info (untrusted metadata)" in lowered or "system:" in lowered or "no_reply" in lowered:
-        return "system"
-    if "没有成型的 task / todo 清单" in lowered or "没有成型的 task/todo 清单" in lowered:
-        return "meta"
-    if "没有挂着的执行任务" in lowered:
-        return "meta"
-    normalized_title = normalize_text(title or "")
-    if normalized_title and re.search(
-        r"(下一步是什么|接下来是什么|任务状态是什么|执行任务状态是什么|what('?s| is) next)[？?]?$",
-        normalized_title,
-        re.I,
-    ):
-        return "meta"
-    if project_id:
-        return "work"
-    if source_agent and str(source_agent).startswith("openclaw-") and ("reply_to_current" in lowered or "共享 memory" in lowered):
-        return "meta"
-    return "work"
+    return governance_classify_task_kind(
+        task_id=task_id,
+        title=title,
+        last_summary=last_summary,
+        source_agent=source_agent,
+        project_id=project_id,
+    )
 
 
 def make_task_id(title: str) -> str:
@@ -1114,6 +1273,73 @@ def derive_task_summary(payload: TaskSummaryWriteRequest) -> dict[str, Optional[
         "blocker": blocker,
         "next_action": next_action,
     }
+
+
+def task_has_actionable_signal(
+    *,
+    title: Optional[str],
+    message: Optional[str],
+    assistant_output: Optional[str],
+    structured: dict[str, Optional[str]],
+    project_id: Optional[str],
+) -> bool:
+    haystack = " ".join(
+        part
+        for part in [
+            normalize_text(title or ""),
+            normalize_text(message or ""),
+            normalize_text(assistant_output or ""),
+            *(normalize_text(value or "") for value in structured.values()),
+        ]
+        if part
+    )
+    if not haystack:
+        return False
+    if re.search(
+        r"继续|实现|修复|修改|分析|排查|写|生成|搭建|部署|测试|重构|优化|迁移|清理|验证|跟进|推进|处理|完成|\b(fix|implement|debug|deploy|test|refactor|optimi[sz]e|migrat|clean up|verify|follow up|investigat|analy[sz]e|build|ship|complete|progress)\b",
+        haystack,
+        re.I,
+    ):
+        return True
+    if project_id and any(normalize_text(value or "") for value in structured.values()):
+        return True
+    return any(normalize_text(value or "") for value in structured.values())
+
+
+def evaluate_task_materialization(
+    *,
+    task_id: Optional[str],
+    title: Optional[str],
+    payload: TaskSummaryWriteRequest,
+    structured: dict[str, Optional[str]],
+) -> tuple[bool, str, str]:
+    last_summary = structured.get("summary") or payload.summary
+    task_kind = classify_task_kind(
+        task_id=task_id,
+        title=title,
+        last_summary=last_summary,
+        source_agent=payload.agent_id,
+        project_id=payload.project_id,
+    )
+    if not governance_should_materialize_task(
+        task_kind=task_kind,
+        title=title,
+        last_summary=last_summary,
+    ):
+        if task_kind != "work":
+            return False, task_kind, f"task_kind:{task_kind}"
+        return False, task_kind, "not_materializable"
+    if is_task_lookup_question(payload.message or ""):
+        return False, task_kind, "lookup_question"
+    if not task_has_actionable_signal(
+        title=title,
+        message=payload.message,
+        assistant_output=payload.assistant_output,
+        structured=structured,
+        project_id=payload.project_id,
+    ):
+        return False, task_kind, "not_actionable"
+    return True, task_kind, "accepted"
 
 
 def ensure_task_db() -> None:
@@ -1399,27 +1625,61 @@ def write_audit(
 def compute_metrics() -> dict[str, Any]:
     ensure_task_db()
     with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
         route_rows = conn.execute(
             "SELECT route, COUNT(*) FROM audit_log WHERE event_type = 'memory_route' GROUP BY route"
         ).fetchall()
         event_rows = conn.execute(
             "SELECT event_type, COUNT(*) FROM audit_log GROUP BY event_type"
         ).fetchall()
-        active_tasks = conn.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status = 'active'"
-        ).fetchone()[0]
-        archived_tasks = conn.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status = 'archived'"
-        ).fetchone()[0]
+        task_rows = conn.execute(
+            "SELECT task_id, title, last_summary, source_agent, project_id, status FROM tasks"
+        ).fetchall()
+        memory_domain_rows = conn.execute(
+            "SELECT COALESCE(domain, 'unknown') AS domain, COUNT(*) AS count FROM memory_cache GROUP BY COALESCE(domain, 'unknown')"
+        ).fetchall()
+        memory_category_rows = conn.execute(
+            "SELECT COALESCE(category, 'uncategorized') AS category, COUNT(*) AS count FROM memory_cache GROUP BY COALESCE(category, 'uncategorized')"
+        ).fetchall()
         cached_memories = conn.execute("SELECT COUNT(*) FROM memory_cache").fetchone()[0]
+
+    tasks_by_status: dict[str, int] = {}
+    tasks_by_kind: dict[str, int] = {}
+    active_work_tasks = 0
+    active_non_work_tasks = 0
+    for row in task_rows:
+        status = str(row["status"] or "unknown")
+        tasks_by_status[status] = tasks_by_status.get(status, 0) + 1
+        task_kind = classify_task_kind(
+            task_id=row["task_id"],
+            title=row["title"],
+            last_summary=row["last_summary"],
+            source_agent=row["source_agent"],
+            project_id=row["project_id"],
+        )
+        tasks_by_kind[task_kind] = tasks_by_kind.get(task_kind, 0) + 1
+        if status == "active":
+            if task_kind == "work":
+                active_work_tasks += 1
+            else:
+                active_non_work_tasks += 1
+
     return {
         "routes": {row[0] or "unknown": row[1] for row in route_rows},
         "events": {row[0]: row[1] for row in event_rows},
         "tasks": {
-            "active": active_tasks,
-            "archived": archived_tasks,
+            "active": tasks_by_status.get("active", 0),
+            "archived": tasks_by_status.get("archived", 0),
+            "by_status": tasks_by_status,
+            "by_kind": tasks_by_kind,
+            "active_work": active_work_tasks,
+            "active_non_work": active_non_work_tasks,
         },
-        "memory_cache": {"entries": cached_memories},
+        "memory_cache": {
+            "entries": cached_memories,
+            "by_domain": {row["domain"]: row["count"] for row in memory_domain_rows},
+            "by_category": {row["category"]: row["count"] for row in memory_category_rows},
+        },
     }
 
 
@@ -1811,12 +2071,47 @@ def hybrid_search(
     }
 
 
-def fetch_tasks(
+def hydrate_task_row(row: sqlite3.Row) -> dict[str, Any]:
+    task = dict(row)
+    task["aliases"] = json.loads(task.pop("aliases_json") or "[]")
+    task["title"] = task_display_title(task)
+    task["task_kind"] = classify_task_kind(
+        task_id=task.get("task_id"),
+        title=task.get("title"),
+        last_summary=task.get("last_summary"),
+        source_agent=task.get("source_agent"),
+        project_id=task.get("project_id"),
+    )
+    task["display_title"] = task["title"]
+    task["summary_preview"] = sanitize_task_summary_preview(task.get("last_summary"))
+    return task
+
+
+def encode_task_cursor(updated_at: Optional[str], task_id: str) -> str:
+    payload = json.dumps({"updated_at": updated_at or "", "task_id": task_id}, ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii")
+
+
+def decode_task_cursor(cursor: str) -> tuple[str, str]:
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid tasks cursor") from exc
+    updated_at = str(payload.get("updated_at") or "")
+    task_id = str(payload.get("task_id") or "")
+    if not task_id:
+        raise HTTPException(status_code=400, detail="Invalid tasks cursor")
+    return updated_at, task_id
+
+
+def fetch_tasks_page(
     user_id: Optional[str] = None,
     project_id: Optional[str] = None,
     status: Optional[str] = "active",
     limit: int = 50,
-) -> list[dict[str, Any]]:
+    cursor: Optional[str] = None,
+) -> tuple[list[dict[str, Any]], Optional[str], bool]:
     ensure_task_db()
     query = "SELECT task_id, user_id, project_id, title, aliases_json, status, last_summary, source_agent, owner_agent, priority, created_at, updated_at, closed_at, archived_at FROM tasks WHERE 1=1"
     params: list[Any] = []
@@ -1829,26 +2124,38 @@ def fetch_tasks(
     if status:
         query += " AND status = ?"
         params.append(status)
-    query += " ORDER BY updated_at DESC LIMIT ?"
-    params.append(max(1, min(limit, 200)))
+    page_size = max(1, min(limit, 200))
+    if cursor:
+        cursor_updated_at, cursor_task_id = decode_task_cursor(cursor)
+        query += " AND ((updated_at < ?) OR (updated_at = ? AND task_id < ?))"
+        params.extend([cursor_updated_at, cursor_updated_at, cursor_task_id])
+    query += " ORDER BY updated_at DESC, task_id DESC LIMIT ?"
+    params.append(page_size + 1)
     with sqlite3.connect(TASK_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(query, params).fetchall()
-    tasks = []
-    for row in rows:
-        task = dict(row)
-        task["aliases"] = json.loads(task.pop("aliases_json") or "[]")
-        task["title"] = task_display_title(task)
-        task["task_kind"] = classify_task_kind(
-            task_id=task.get("task_id"),
-            title=task.get("title"),
-            last_summary=task.get("last_summary"),
-            source_agent=task.get("source_agent"),
-            project_id=task.get("project_id"),
-        )
-        task["display_title"] = task["title"]
-        task["summary_preview"] = sanitize_task_summary_preview(task.get("last_summary"))
-        tasks.append(task)
+    has_more = len(rows) > page_size
+    page_rows = rows[:page_size]
+    tasks = [hydrate_task_row(row) for row in page_rows]
+    next_cursor = None
+    if has_more and tasks:
+        last = tasks[-1]
+        next_cursor = encode_task_cursor(last.get("updated_at"), str(last["task_id"]))
+    return tasks, next_cursor, has_more
+
+
+def fetch_tasks(
+    user_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    status: Optional[str] = "active",
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    tasks, _next_cursor, _has_more = fetch_tasks_page(
+        user_id=user_id,
+        project_id=project_id,
+        status=status,
+        limit=limit,
+    )
     return tasks
 
 
@@ -1857,6 +2164,7 @@ def normalize_tasks(
     user_id: Optional[str],
     project_id: Optional[str],
     archive_non_work_active: bool,
+    prune_non_work_archived: bool,
     dry_run: bool,
 ) -> dict[str, int]:
     ensure_task_db()
@@ -1880,6 +2188,12 @@ def normalize_tasks(
     updated_titles = 0
     archived_tasks = 0
     kinds_reclassified = 0
+    active_non_work_detected = 0
+    archived_non_work_detected = 0
+    deleted_archived_non_work_tasks = 0
+    deleted_archived_non_work_memory = 0
+    changed_task_ids: set[str] = set()
+    archived_non_work_task_ids_to_delete: list[str] = []
     now = utcnow_iso()
     with sqlite3.connect(TASK_DB_PATH) as conn:
         for row in rows:
@@ -1899,6 +2213,7 @@ def normalize_tasks(
             )
             if normalized_title != old_title:
                 updated_titles += 1
+                changed_task_ids.add(task["task_id"])
                 if not dry_run:
                     conn.execute(
                         "UPDATE tasks SET title = ?, updated_at = ? WHERE task_id = ?",
@@ -1906,13 +2221,55 @@ def normalize_tasks(
                     )
             if task_kind != "work":
                 kinds_reclassified += 1
+                if task.get("status") == "active":
+                    active_non_work_detected += 1
+                elif task.get("status") == "archived":
+                    archived_non_work_detected += 1
+                    if prune_non_work_archived:
+                        archived_non_work_task_ids_to_delete.append(str(task["task_id"]))
                 if archive_non_work_active and task.get("status") == "active":
                     archived_tasks += 1
+                    changed_task_ids.add(task["task_id"])
                     if not dry_run:
                         conn.execute(
                             "UPDATE tasks SET status = 'archived', archived_at = COALESCE(archived_at, ?), updated_at = ? WHERE task_id = ?",
                             (now, now, task["task_id"]),
                         )
+        if prune_non_work_archived and archived_non_work_task_ids_to_delete:
+            deleted_archived_non_work_tasks = len(archived_non_work_task_ids_to_delete)
+            if not dry_run:
+                placeholders = ",".join("?" for _ in archived_non_work_task_ids_to_delete)
+                memory_rows = conn.execute(
+                    f"""
+                    SELECT memory_id
+                    FROM memory_cache
+                    WHERE domain = 'task'
+                      AND (task_id IN ({placeholders}) OR run_id IN ({placeholders}))
+                    """,
+                    [*archived_non_work_task_ids_to_delete, *archived_non_work_task_ids_to_delete],
+                ).fetchall()
+                memory_ids = [str(row[0]) for row in memory_rows]
+                deleted_memory_ids: list[str] = []
+                failed_memory_ids: list[str] = []
+                for memory_id in memory_ids:
+                    try:
+                        get_memory_backend().delete(memory_id=memory_id)
+                        deleted_memory_ids.append(memory_id)
+                    except Exception:
+                        logger.warning("Failed to delete archived non-work task memory %s", memory_id, exc_info=True)
+                        failed_memory_ids.append(memory_id)
+                deleted_archived_non_work_memory = len(deleted_memory_ids)
+                if deleted_memory_ids:
+                    conn.executemany("DELETE FROM memory_cache WHERE memory_id = ?", [(memory_id,) for memory_id in deleted_memory_ids])
+                if failed_memory_ids:
+                    deleted_archived_non_work_tasks = 0
+                    raise RuntimeError(
+                        f"Failed to delete archived non-work task memories: {failed_memory_ids[:5]}"
+                    )
+                conn.execute(
+                    f"DELETE FROM tasks WHERE task_id IN ({placeholders})",
+                    archived_non_work_task_ids_to_delete,
+                )
         if not dry_run:
             conn.commit()
 
@@ -1920,7 +2277,12 @@ def normalize_tasks(
         "scanned_tasks": len(rows),
         "updated_titles": updated_titles,
         "reclassified_non_work": kinds_reclassified,
+        "active_non_work_detected": active_non_work_detected,
+        "archived_non_work_detected": archived_non_work_detected,
         "archived_tasks": archived_tasks,
+        "deleted_archived_non_work_tasks": deleted_archived_non_work_tasks,
+        "deleted_archived_non_work_memory": deleted_archived_non_work_memory,
+        "changed_tasks": len(changed_task_ids),
     }
 
 
@@ -2045,21 +2407,46 @@ def resolve_task(payload: TaskResolutionRequest) -> dict[str, Any]:
 
     title = derive_task_title(payload.message)
     task_id = make_task_id(title)
-    task = upsert_task(
-        task_id=task_id,
-        user_id=payload.user_id,
-        project_id=payload.project_id,
-        title=title,
-        source_agent=payload.agent_id,
-        last_summary=compact_text(payload.assistant_output or payload.message, 180),
-        aliases=[],
+    structured = derive_task_summary(
+        TaskSummaryWriteRequest(
+            user_id=payload.user_id,
+            agent_id=payload.agent_id,
+            project_id=payload.project_id,
+            task_id=task_id,
+            title=title,
+            message=payload.message,
+            assistant_output=payload.assistant_output,
+        )
     )
+    should_materialize, task_kind, task_reason = evaluate_task_materialization(
+        task_id=task_id,
+        title=title,
+        payload=TaskSummaryWriteRequest(
+            user_id=payload.user_id,
+            agent_id=payload.agent_id,
+            project_id=payload.project_id,
+            task_id=task_id,
+            title=title,
+            message=payload.message,
+            assistant_output=payload.assistant_output,
+        ),
+        structured=structured,
+    )
+    if not should_materialize:
+        return {
+            "action": "no_task",
+            "task_id": None,
+            "title": None,
+            "confidence": 0.0,
+            "reason": task_reason,
+            "task_kind": task_kind,
+        }
     return {
-        "action": "create_new_task",
-        "task_id": task["task_id"],
-        "title": task["title"],
+        "action": "propose_new_task",
+        "task_id": task_id,
+        "title": title,
         "confidence": 1.0,
-        "reason": "Created a new active task from task-like content",
+        "reason": "Proposed a new task from task-like content",
     }
 
 
@@ -2326,6 +2713,21 @@ def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depe
         title = title or resolution["title"]
 
     structured = derive_task_summary(payload)
+    should_materialize, task_kind, task_reason = evaluate_task_materialization(
+        task_id=task_id,
+        title=title or task_id,
+        payload=payload,
+        structured=structured,
+    )
+    if not should_materialize:
+        return {
+            "action": "skipped",
+            "reason": task_reason,
+            "resolution": resolution,
+            "task_kind": task_kind,
+            "store_task_memory": False,
+        }
+
     task = upsert_task(
         task_id=task_id,
         user_id=payload.user_id,
@@ -2335,17 +2737,32 @@ def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depe
         last_summary=structured["summary"] or payload.summary,
         aliases=[],
     )
+    task["task_kind"] = task_kind
+
+    category_map = {
+        "summary": "handoff",
+        "progress": "progress",
+        "blocker": "blocker",
+        "next_action": "next_action",
+    }
+    approved_fields, governance_decisions = filter_task_memory_fields(
+        task_kind=task_kind,
+        fields=structured,
+        judge_field=lambda field, value: govern_text_decision(
+            value,
+            {
+                "domain": "task",
+                "source_agent": payload.agent_id,
+                "project_id": payload.project_id,
+                "category": category_map[field],
+                "task_id": task_id,
+            },
+            origin="task_summary",
+        ),
+    )
 
     stored = []
-    for field, category in (
-        ("summary", "handoff"),
-        ("progress", "progress"),
-        ("blocker", "blocker"),
-        ("next_action", "next_action"),
-    ):
-        value = structured.get(field)
-        if not value:
-            continue
+    for field, value in approved_fields.items():
         result = store_memory_with_governance(
             messages=[{"role": "user", "content": value}],
             user_id=payload.user_id,
@@ -2355,7 +2772,7 @@ def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depe
                 "domain": "task",
                 "source_agent": payload.agent_id,
                 "project_id": payload.project_id,
-                "category": category,
+                "category": category_map[field],
                 "task_id": task_id,
             },
             infer=False,
@@ -2367,6 +2784,8 @@ def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depe
         "task": task,
         "resolution": resolution,
         "stored": stored,
+        "governance": governance_decisions,
+        "store_task_memory": should_store_task_memory(task_kind),
     }
 
 
@@ -2377,13 +2796,28 @@ def list_tasks(
     project_id: Optional[str] = None,
     status: Optional[str] = "active",
     limit: int = 50,
+    cursor: Optional[str] = None,
     auth: dict[str, Any] = Depends(verify_api_key),
 ):
     require_scope(auth, "task")
     user_id = enforce_user_identity(auth, user_id)
     if user_id is None and not auth.get("is_admin"):
         raise HTTPException(status_code=400, detail="user_id is required for non-admin keys")
-    return {"tasks": fetch_tasks(user_id, project_id, status, limit)}
+    tasks, next_cursor, has_more = fetch_tasks_page(
+        user_id=user_id,
+        project_id=project_id,
+        status=status,
+        limit=limit,
+        cursor=cursor,
+    )
+    return {
+        "tasks": tasks,
+        "page_info": {
+            "limit": max(1, min(limit, 200)),
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+        },
+    }
 
 
 @app.get("/tasks/{task_id}")
@@ -2463,6 +2897,7 @@ def tasks_normalize(payload: TaskNormalizeRequest, auth: dict[str, Any] = Depend
         user_id=payload.user_id,
         project_id=payload.project_id,
         archive_non_work_active=payload.archive_non_work_active,
+        prune_non_work_archived=payload.prune_non_work_archived,
         dry_run=payload.dry_run,
     )
     write_audit(
@@ -2472,13 +2907,19 @@ def tasks_normalize(payload: TaskNormalizeRequest, auth: dict[str, Any] = Depend
         event_type="task_normalize",
         user_id=payload.user_id,
         project_id=payload.project_id,
-        detail={**result, "dry_run": payload.dry_run, "archive_non_work_active": payload.archive_non_work_active},
+        detail={
+            **result,
+            "dry_run": payload.dry_run,
+            "archive_non_work_active": payload.archive_non_work_active,
+            "prune_non_work_archived": payload.prune_non_work_archived,
+        },
     )
     return {
         **result,
         "dry_run": payload.dry_run,
         "user_id": payload.user_id,
         "project_id": payload.project_id,
+        "prune_non_work_archived": payload.prune_non_work_archived,
     }
 
 
@@ -2498,6 +2939,25 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
     noise_memory_ids: list[str] = []
     rewrite_rows: list[dict[str, Any]] = []
     canonicalized_long_term_count = 0
+    task_normalize_result = {
+        "scanned_tasks": 0,
+        "updated_titles": 0,
+        "reclassified_non_work": 0,
+        "archived_tasks": 0,
+        "active_non_work_detected": 0,
+        "archived_non_work_detected": 0,
+        "deleted_archived_non_work_tasks": 0,
+        "deleted_archived_non_work_memory": 0,
+        "changed_tasks": 0,
+    }
+    if payload.normalize_task_state:
+        task_normalize_result = normalize_tasks(
+            user_id=payload.user_id,
+            project_id=payload.project_id,
+            archive_non_work_active=True,
+            prune_non_work_archived=payload.prune_non_work_archived,
+            dry_run=payload.dry_run,
+        )
     with sqlite3.connect(TASK_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         query = """
@@ -2525,22 +2985,20 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
             "task_id": item.get("task_id") or None,
             "source_agent": item.get("source_agent") or None,
         }
-        governed = govern_memory_text(str(item.get("text") or ""), metadata)
+        origin = "consolidate" if should_run_offline_judge(text=str(item.get("text") or ""), metadata=metadata) else "memory_store"
+        governed = govern_memory_text(str(item.get("text") or ""), metadata, origin=origin)
         item["governed"] = governed
         if governed["action"] == "skip":
             noise_memory_ids.append(str(item["memory_id"]))
             continue
+        if governed.get("canonicalized"):
+            rewrite_rows.append(item | {"canonical_text": str(governed["text"])})
+            if item.get("domain") == "long_term":
+                canonicalized_long_term_count += 1
         if item.get("domain") != "long_term":
             continue
-        if governed.get("canonicalized"):
-            canonicalized_long_term_count += 1
         item["canonical_text"] = str(governed["text"])
-        key = (
-            str(item.get("user_id") or ""),
-            item["canonical_text"],
-            str(item.get("category") or ""),
-            str(item.get("project_id") or ""),
-        )
+        key = build_long_term_duplicate_key(item)
         long_term_groups.setdefault(key, []).append(item)
 
     for group in long_term_groups.values():
@@ -2553,25 +3011,26 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
             ),
         )
         keeper = ordered[0]
-        if str(keeper.get("text") or "") != str(keeper.get("canonical_text") or ""):
-            rewrite_rows.append(keeper)
         for duplicate in ordered[1:]:
             duplicate_memory_ids.append(str(duplicate["memory_id"]))
-    archived_tasks = 0
+    closed_tasks_archived = 0
     if payload.archive_closed_tasks and not payload.dry_run:
         with sqlite3.connect(TASK_DB_PATH) as conn:
             cursor = conn.execute(
                 "UPDATE tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE status = 'closed'",
                 (utcnow_iso(), utcnow_iso()),
             )
-            archived_tasks = cursor.rowcount
+            closed_tasks_archived = cursor.rowcount
             conn.commit()
     if payload.dedupe_long_term and not payload.dry_run:
+        duplicate_id_set = set(duplicate_memory_ids)
         for memory_id in noise_memory_ids:
             get_memory_backend().delete(memory_id=memory_id)
             delete_cached_memory(memory_id)
         for row in rewrite_rows:
             original_memory_id = str(row["memory_id"])
+            if original_memory_id in duplicate_id_set:
+                continue
             metadata = {
                 "domain": row.get("domain"),
                 "category": row.get("category"),
@@ -2602,12 +3061,23 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         for memory_id in duplicate_memory_ids:
             get_memory_backend().delete(memory_id=memory_id)
             delete_cached_memory(memory_id)
+    archived_tasks_count = task_normalize_result["archived_tasks"] + closed_tasks_archived
     result = {
         "dry_run": payload.dry_run,
         "duplicate_long_term_count": len(duplicate_memory_ids),
         "canonicalized_long_term_count": canonicalized_long_term_count,
         "deleted_noise_count": len(noise_memory_ids),
-        "archived_tasks_count": archived_tasks,
+        "archived_tasks_count": archived_tasks_count,
+        "normalized_tasks_count": task_normalize_result["changed_tasks"],
+        "task_reclassified_count": task_normalize_result["archived_tasks"],
+        "tasks_scanned_count": task_normalize_result["scanned_tasks"],
+        "non_work_tasks_detected_count": task_normalize_result["reclassified_non_work"],
+        "active_non_work_detected_count": task_normalize_result["active_non_work_detected"],
+        "archived_non_work_detected_count": task_normalize_result["archived_non_work_detected"],
+        "deleted_archived_non_work_tasks_count": task_normalize_result["deleted_archived_non_work_tasks"],
+        "deleted_archived_non_work_memory_count": task_normalize_result["deleted_archived_non_work_memory"],
+        "task_titles_rewritten_count": task_normalize_result["updated_titles"],
+        "closed_tasks_archived_count": closed_tasks_archived,
         "user_id": payload.user_id,
         "project_id": payload.project_id,
     }
