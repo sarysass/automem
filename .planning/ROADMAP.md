@@ -10,7 +10,7 @@ automem is evolving from foundational memory hardening into a shared memory cont
 - [x] **Phase 02: Centralize Memory Governance** - Make backend governance the single decision point for memory and task admission.
 - [x] **Phase 03: Stabilize Cache And Consolidation** - Refresh cache before maintenance and make consolidation rewrites safer.
 - [x] **Phase 04: Shared Identity And Access Model** - Extend visibility and access from raw user scope to project-aware shared collaboration. (completed 2026-04-15)
-- [ ] **Phase 05: Retrieval And Explainability** - Upgrade recall to hybrid retrieval and make result provenance visible.
+- [x] **Phase 05: Retrieval And Explainability** - Upgrade recall to hybrid retrieval and make result provenance visible. (completed 2026-04-15)
 - [ ] **Phase 06: Temporal Facts And Conflict Governance** - Model durable memory as evolving facts with lifecycle and conflict states.
 - [ ] **Phase 07: Runtime Architecture Upgrade** - Split hot-path admission from background governance and clarify API/worker/MCP roles.
 
@@ -76,10 +76,10 @@ Plans:
   1. recall 组合 semantic、lexical/FTS 与 metadata filters，而不是单一路径。
   2. task/project/name/alias 等高价值查询的命中率比纯向量路径更稳定。
   3. 每条结果都暴露结构化 explainability 字段，便于 API、MCP 和运维调试使用。
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 05-01: Add hybrid retrieval, result provenance, and explainable recall surfaces
+- [x] 05-01: Add hybrid retrieval, result provenance, and explainable recall surfaces
 
 ### Phase 06: Temporal Facts And Conflict Governance
 **Goal:** 将长期记忆从“文本集合”升级为“可演化事实”，支持版本化、冲突检测与 supersede 流程。
