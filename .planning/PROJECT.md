@@ -18,10 +18,10 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 - [x] Shared API surface for memory, task state, consolidation, audit, and MCP-facing adapters
 - [x] Foundational auth hardening, task normalization, and scheduled consolidation safety
 - [x] Shared identity and access model beyond raw `user_id` (validated in Phase 04: project-scoped enforcement across memory, task, and CLI key creation)
+- [x] Retrieval and explainability upgrades for memory/task recall (validated in Phase 05: hybrid retrieval now returns explainable match paths, metadata filters, and task alias recall)
 
 ### Active
 
-- [ ] Retrieval and explainability upgrades for memory/task recall
 - [ ] Temporal fact lifecycle and conflict governance
 - [ ] Runtime split between hot-path admission and background governance workers
 
@@ -42,6 +42,7 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 ## Current State
 
 - Phase `04` is complete: project-scoped identity enforcement now covers memory/task writes, reads, and memory deletion, and the CLI can mint bound keys with `user_id` plus repeated `project_id` scopes.
+- Phase `05` is complete: search now exposes explainable hybrid retrieval signals (`semantic` / `lexical` / `metadata`), carries lifecycle status in results, and can recover task memories via task title and alias metadata.
 
 ## Constraints
 
@@ -60,4 +61,4 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 | Tests should lead phase execution | Protects a sensitive backend where regressions are hard to notice manually | ✓ Good |
 
 ---
-*Last updated: 2026-04-16 after Phase 04 execution*
+*Last updated: 2026-04-16 after Phase 05 execution*
