@@ -197,6 +197,10 @@ def cmd_consolidate(args: argparse.Namespace) -> None:
         "user_id": args.user_id,
         "project_id": args.project_id,
     }
+    if args.archive_work_without_memory_active is not None:
+        payload["archive_work_without_memory_active"] = args.archive_work_without_memory_active
+    if args.prune_work_without_memory_archived is not None:
+        payload["prune_work_without_memory_archived"] = args.prune_work_without_memory_archived
     with build_client() as client:
         emit(decode_response(client.post("/consolidate", json=payload)), args.pretty)
 
@@ -207,6 +211,10 @@ def cmd_agent_key_create(args: argparse.Namespace) -> None:
         "label": args.label,
         "scopes": [scope.strip() for scope in args.scopes.split(",") if scope.strip()],
     }
+    if args.user_id:
+        payload["user_id"] = args.user_id
+    if args.project_ids:
+        payload["project_ids"] = [project_id.strip() for project_id in args.project_ids if project_id.strip()]
     if args.token:
         payload["token"] = args.token
     with build_client() as client:
@@ -299,6 +307,34 @@ def build_parser() -> argparse.ArgumentParser:
     consolidate.add_argument("--dry-run", action="store_true")
     consolidate.add_argument("--user-id")
     consolidate.add_argument("--project-id")
+    consolidate.set_defaults(
+        archive_work_without_memory_active=None,
+        prune_work_without_memory_archived=None,
+    )
+    consolidate.add_argument(
+        "--archive-work-without-memory-active",
+        dest="archive_work_without_memory_active",
+        action="store_true",
+        help="Archive active work tasks that have no persisted task memory.",
+    )
+    consolidate.add_argument(
+        "--no-archive-work-without-memory-active",
+        dest="archive_work_without_memory_active",
+        action="store_false",
+        help="Keep active work tasks even if they have no persisted task memory.",
+    )
+    consolidate.add_argument(
+        "--prune-work-without-memory-archived",
+        dest="prune_work_without_memory_archived",
+        action="store_true",
+        help="Delete archived work tasks that have no persisted task memory.",
+    )
+    consolidate.add_argument(
+        "--no-prune-work-without-memory-archived",
+        dest="prune_work_without_memory_archived",
+        action="store_false",
+        help="Keep archived work tasks even if they have no persisted task memory.",
+    )
     consolidate.set_defaults(func=cmd_consolidate)
 
     cache = sub.add_parser("cache")
@@ -315,6 +351,8 @@ def build_parser() -> argparse.ArgumentParser:
     key_create.add_argument("--agent-id", required=True)
     key_create.add_argument("--label", required=True)
     key_create.add_argument("--scopes", default="search,store,route,task,metrics")
+    key_create.add_argument("--user-id")
+    key_create.add_argument("--project-id", dest="project_ids", action="append", default=[])
     key_create.add_argument("--token")
     key_create.set_defaults(func=cmd_agent_key_create)
 

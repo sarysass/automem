@@ -97,8 +97,13 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 TASK_DB_PATH = Path(os.environ.get("TASK_DB_PATH", str(BASE_DIR / "data" / "tasks" / "tasks.db")))
 AGENT_KEYS_JSON = os.environ.get("AGENT_KEYS_JSON", "")
-DEFAULT_USER_ID = os.environ.get("DEFAULT_MEMORY_USER_ID", "example-user")
 DEFAULT_AGENT_ID = os.environ.get("DEFAULT_MEMORY_AGENT_ID", "agent-default")
+ALLOW_INSECURE_NOAUTH = os.environ.get("AUTOMEM_ALLOW_INSECURE_NOAUTH", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 CONFIG = {
@@ -158,6 +163,7 @@ class MemoryCreate(BaseModel):
     user_id: Optional[str] = None
     agent_id: Optional[str] = None
     run_id: Optional[str] = None
+    project_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     infer: bool = True
 
@@ -167,6 +173,7 @@ class SearchRequest(BaseModel):
     user_id: Optional[str] = None
     run_id: Optional[str] = None
     agent_id: Optional[str] = None
+    project_id: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
     limit: int = 10
 
@@ -214,6 +221,8 @@ class ConsolidateRequest(BaseModel):
     archive_closed_tasks: bool = True
     normalize_task_state: bool = True
     prune_non_work_archived: bool = False
+    archive_work_without_memory_active: bool = True
+    prune_work_without_memory_archived: bool = False
     user_id: Optional[str] = None
     project_id: Optional[str] = None
 
@@ -228,6 +237,8 @@ class AgentKeyCreateRequest(BaseModel):
     agent_id: str
     label: str
     scopes: List[str]
+    user_id: Optional[str] = None
+    project_ids: Optional[List[str]] = None
     token: Optional[str] = None
 
 
@@ -241,6 +252,8 @@ class TaskNormalizeRequest(BaseModel):
     project_id: Optional[str] = None
     archive_non_work_active: bool = True
     prune_non_work_archived: bool = False
+    archive_work_without_memory_active: bool = True
+    prune_work_without_memory_archived: bool = False
 
 
 def utcnow_iso() -> str:
@@ -260,10 +273,16 @@ def get_memory_backend():
 async def lifespan(_app: FastAPI):
     ensure_task_db()
     seed_agent_keys()
+    if not auth_bootstrap_bypass_enabled() and not ADMIN_API_KEY and not has_usable_api_keys():
+        raise RuntimeError(
+            "No usable auth is configured. Set ADMIN_API_KEY, or seed at least one active API key "
+            "with admin scope or a bound user_id. For local-only unsafe bootstrap, set "
+            "AUTOMEM_ALLOW_INSECURE_NOAUTH=1."
+        )
     yield
 
 
-app = FastAPI(title="Mem0 Lightweight API", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="automem API", version="1.1.0", lifespan=lifespan)
 
 
 def normalize_text(text: str) -> str:
@@ -1375,6 +1394,8 @@ def ensure_task_db() -> None:
                 token_hash TEXT NOT NULL UNIQUE,
                 label TEXT NOT NULL,
                 agent_id TEXT,
+                user_id TEXT,
+                project_ids_json TEXT NOT NULL DEFAULT '[]',
                 scopes_json TEXT NOT NULL DEFAULT '[]',
                 status TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT NOT NULL,
@@ -1382,6 +1403,8 @@ def ensure_task_db() -> None:
             )
             """
         )
+        add_column_if_missing(conn, "api_keys", "user_id", "TEXT")
+        add_column_if_missing(conn, "api_keys", "project_ids_json", "TEXT NOT NULL DEFAULT '[]'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -1474,25 +1497,47 @@ def seed_agent_keys() -> None:
             token = item.get("token")
             if not token:
                 continue
+            scopes = item.get("scopes") or []
+            user_id = item.get("user_id")
+            project_ids = normalize_project_ids(item.get("project_ids"))
+            if "admin" not in scopes and not user_id:
+                logging.warning(
+                    "Skipping agent key bootstrap for %s because non-admin keys must declare user_id",
+                    item.get("agent_id") or item.get("label") or "unknown",
+                )
+                continue
             conn.execute(
                 """
-                INSERT OR IGNORE INTO api_keys (key_id, token_hash, label, agent_id, scopes_json, status, created_at)
-                VALUES (?, ?, ?, ?, ?, 'active', ?)
+                INSERT OR IGNORE INTO api_keys (key_id, token_hash, label, agent_id, user_id, project_ids_json, scopes_json, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
                 """,
                 (
                     item.get("key_id") or f"key_{item.get('agent_id') or uuid.uuid4().hex[:8]}",
                     hash_token(str(token)),
                     item.get("label") or item.get("agent_id") or "agent",
                     item.get("agent_id"),
-                    json.dumps(item.get("scopes") or [], ensure_ascii=False),
+                    user_id,
+                    json.dumps(project_ids, ensure_ascii=False),
+                    json.dumps(scopes, ensure_ascii=False),
                     now,
                 ),
             )
         conn.commit()
 
 
-def create_agent_key(*, agent_id: str, label: str, scopes: list[str], token: Optional[str] = None) -> dict[str, Any]:
+def create_agent_key(
+    *,
+    agent_id: str,
+    label: str,
+    scopes: list[str],
+    user_id: Optional[str] = None,
+    project_ids: Optional[list[str]] = None,
+    token: Optional[str] = None,
+) -> dict[str, Any]:
     ensure_task_db()
+    if "admin" not in scopes and not user_id:
+        raise ValueError("Non-admin agent keys require user_id")
+    normalized_project_ids = normalize_project_ids(project_ids)
     token_value = token or f"automem-agent-{uuid.uuid4().hex}"
     now = utcnow_iso()
     record = {
@@ -1500,6 +1545,8 @@ def create_agent_key(*, agent_id: str, label: str, scopes: list[str], token: Opt
         "token": token_value,
         "label": label,
         "agent_id": agent_id,
+        "user_id": user_id,
+        "project_ids": normalized_project_ids,
         "scopes": scopes,
         "status": "active",
         "created_at": now,
@@ -1507,14 +1554,16 @@ def create_agent_key(*, agent_id: str, label: str, scopes: list[str], token: Opt
     with sqlite3.connect(TASK_DB_PATH) as conn:
         conn.execute(
             """
-            INSERT INTO api_keys (key_id, token_hash, label, agent_id, scopes_json, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'active', ?)
+            INSERT INTO api_keys (key_id, token_hash, label, agent_id, user_id, project_ids_json, scopes_json, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
             """,
             (
                 record["key_id"],
                 hash_token(token_value),
                 label,
                 agent_id,
+                user_id,
+                json.dumps(normalized_project_ids, ensure_ascii=False),
                 json.dumps(scopes, ensure_ascii=False),
                 now,
             ),
@@ -1528,12 +1577,13 @@ def fetch_api_key(token: str) -> Optional[dict[str, Any]]:
     with sqlite3.connect(TASK_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT key_id, label, agent_id, scopes_json, status, created_at, last_used_at FROM api_keys WHERE token_hash = ?",
+            "SELECT key_id, label, agent_id, user_id, project_ids_json, scopes_json, status, created_at, last_used_at FROM api_keys WHERE token_hash = ?",
             (hash_token(token),),
         ).fetchone()
     if not row:
         return None
     key = dict(row)
+    key["project_ids"] = json.loads(key.pop("project_ids_json") or "[]")
     key["scopes"] = json.loads(key.pop("scopes_json") or "[]")
     return key
 
@@ -1543,14 +1593,71 @@ def list_api_keys() -> list[dict[str, Any]]:
     with sqlite3.connect(TASK_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT key_id, label, agent_id, scopes_json, status, created_at, last_used_at FROM api_keys ORDER BY created_at DESC"
+            "SELECT key_id, label, agent_id, user_id, project_ids_json, scopes_json, status, created_at, last_used_at FROM api_keys ORDER BY created_at DESC"
         ).fetchall()
     keys = []
     for row in rows:
         item = dict(row)
+        item["project_ids"] = json.loads(item.pop("project_ids_json") or "[]")
         item["scopes"] = json.loads(item.pop("scopes_json") or "[]")
         keys.append(item)
     return keys
+
+
+def normalize_project_ids(project_ids: Optional[Any]) -> list[str]:
+    if not project_ids:
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in project_ids:
+        value = normalize_text(str(raw or ""))
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return cleaned
+
+
+def merge_project_id_into_metadata(project_id: Optional[str], metadata: Optional[dict[str, Any]]) -> dict[str, Any]:
+    merged = dict(metadata or {})
+    existing = normalize_text(str(merged.get("project_id") or ""))
+    if project_id and existing and existing != project_id:
+        raise HTTPException(status_code=400, detail="project_id conflicts with metadata.project_id")
+    if project_id:
+        merged["project_id"] = project_id
+    return merged
+
+
+def merge_project_id_into_filters(project_id: Optional[str], filters: Optional[dict[str, Any]]) -> dict[str, Any]:
+    merged = dict(filters or {})
+    existing = normalize_text(str(merged.get("project_id") or ""))
+    if project_id and existing and existing != project_id:
+        raise HTTPException(status_code=400, detail="project_id conflicts with filters.project_id")
+    if project_id:
+        merged["project_id"] = project_id
+    return merged
+
+
+def auth_bootstrap_bypass_enabled() -> bool:
+    return ALLOW_INSECURE_NOAUTH or "PYTEST_CURRENT_TEST" in os.environ
+
+
+def has_usable_api_keys() -> bool:
+    ensure_task_db()
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM api_keys
+            WHERE status = 'active'
+              AND (
+                COALESCE(user_id, '') != ''
+                OR scopes_json LIKE '%"admin"%'
+              )
+            LIMIT 1
+            """
+        ).fetchone()
+    return row is not None
 
 
 def fetch_audit_log(*, limit: int = 50, event_type: Optional[str] = None) -> list[dict[str, Any]]:
@@ -1703,10 +1810,61 @@ def enforce_agent_identity(auth: dict[str, Any], agent_id: Optional[str]) -> Opt
 def enforce_user_identity(auth: dict[str, Any], user_id: Optional[str]) -> Optional[str]:
     if auth.get("is_admin"):
         return user_id
-    key_user_id = auth.get("user_id") or DEFAULT_USER_ID
+    key_user_id = auth.get("user_id")
+    if not key_user_id:
+        raise HTTPException(status_code=403, detail="API key is not bound to a user_id")
     if user_id and key_user_id and user_id != key_user_id:
         raise HTTPException(status_code=403, detail="user_id does not match API key identity")
     return key_user_id or user_id
+
+
+def enforce_project_identity(auth: dict[str, Any], project_id: Optional[str]) -> Optional[str]:
+    if auth.get("is_admin"):
+        return project_id
+    allowed_project_ids = normalize_project_ids(auth.get("project_ids"))
+    if not allowed_project_ids:
+        return project_id
+    if project_id:
+        if project_id not in allowed_project_ids:
+            raise HTTPException(status_code=403, detail="project_id does not match API key access scope")
+        return project_id
+    if len(allowed_project_ids) == 1:
+        return allowed_project_ids[0]
+    raise HTTPException(status_code=400, detail="project_id is required for API keys bound to multiple projects")
+
+
+def enforce_payload_project_identity(auth: dict[str, Any], payload: Any) -> None:
+    if not hasattr(payload, "project_id"):
+        return
+    payload.project_id = enforce_project_identity(auth, getattr(payload, "project_id"))
+
+
+def ensure_task_row_access(auth: dict[str, Any], row: sqlite3.Row) -> dict[str, Any]:
+    task = dict(row)
+    if auth.get("is_admin"):
+        return task
+    auth_user_id = auth.get("user_id")
+    if auth_user_id and task.get("user_id") != auth_user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    allowed_project_ids = normalize_project_ids(auth.get("project_ids"))
+    task_project_id = normalize_text(str(task.get("project_id") or ""))
+    if allowed_project_ids and task_project_id not in allowed_project_ids:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+def ensure_memory_item_access(auth: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    if auth.get("is_admin"):
+        return item
+    auth_user_id = auth.get("user_id")
+    item_user_id = item.get("user_id")
+    if auth_user_id and item_user_id and item_user_id != auth_user_id:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    allowed_project_ids = normalize_project_ids(auth.get("project_ids"))
+    item_project_id = normalize_text(str((item.get("metadata") or {}).get("project_id") or ""))
+    if allowed_project_ids and item_project_id not in allowed_project_ids:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return item
 
 
 def extract_memory_id(result: Any) -> Optional[str]:
@@ -1969,7 +2127,19 @@ def hybrid_search(
     has_identity_scope = any(value is not None for value in (user_id, run_id, agent_id))
     if has_identity_scope:
         vector_results = backend.search(query=vector_query, **params)
-        candidates = vector_results.get("results", [])
+        raw_candidates = vector_results.get("results", [])
+        candidates = []
+        for item in raw_candidates:
+            metadata = item.get("metadata") or {}
+            if effective_filters.get("project_id") and normalize_text(str(metadata.get("project_id") or "")) != normalize_text(
+                str(effective_filters["project_id"])
+            ):
+                continue
+            if effective_filters.get("category") and str(metadata.get("category") or "") != str(effective_filters["category"]):
+                continue
+            if effective_filters.get("domain") and str(metadata.get("domain") or "") != str(effective_filters["domain"]):
+                continue
+            candidates.append(item)
         mode = "hybrid"
     else:
         candidates = []
@@ -2159,14 +2329,44 @@ def fetch_tasks(
     return tasks
 
 
+def fetch_task_ids_with_memory(
+    *,
+    user_id: Optional[str],
+    project_id: Optional[str],
+) -> set[str]:
+    ensure_task_db()
+    query = """
+        SELECT DISTINCT COALESCE(NULLIF(task_id, ''), NULLIF(run_id, '')) AS effective_task_id
+        FROM memory_cache
+        WHERE domain = 'task'
+          AND COALESCE(NULLIF(task_id, ''), NULLIF(run_id, '')) IS NOT NULL
+    """
+    params: list[Any] = []
+    if user_id is not None:
+        query += " AND user_id = ?"
+        params.append(user_id)
+    if project_id is not None:
+        query += " AND project_id IS ?"
+        params.append(project_id)
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        rows = conn.execute(query, params).fetchall()
+    return {str(row[0]) for row in rows if row and row[0]}
+
+
 def normalize_tasks(
     *,
     user_id: Optional[str],
     project_id: Optional[str],
     archive_non_work_active: bool,
     prune_non_work_archived: bool,
+    archive_work_without_memory_active: bool,
+    prune_work_without_memory_archived: bool,
     dry_run: bool,
+    refresh_cache: bool = True,
 ) -> dict[str, int]:
+    rebuilt_cache_count = 0
+    if refresh_cache:
+        rebuilt_cache_count = rebuild_memory_cache(user_id=user_id, run_id=None, agent_id=None)
     ensure_task_db()
     query = """
         SELECT task_id, user_id, project_id, title, aliases_json, status, last_summary, source_agent,
@@ -2192,8 +2392,14 @@ def normalize_tasks(
     archived_non_work_detected = 0
     deleted_archived_non_work_tasks = 0
     deleted_archived_non_work_memory = 0
+    active_work_without_memory_detected = 0
+    archived_work_without_memory_detected = 0
+    archived_work_without_memory_tasks = 0
+    deleted_archived_work_without_memory_tasks = 0
     changed_task_ids: set[str] = set()
     archived_non_work_task_ids_to_delete: list[str] = []
+    archived_work_without_memory_task_ids_to_delete: list[str] = []
+    task_ids_with_memory = fetch_task_ids_with_memory(user_id=user_id, project_id=project_id)
     now = utcnow_iso()
     with sqlite3.connect(TASK_DB_PATH) as conn:
         for row in rows:
@@ -2235,6 +2441,23 @@ def normalize_tasks(
                             "UPDATE tasks SET status = 'archived', archived_at = COALESCE(archived_at, ?), updated_at = ? WHERE task_id = ?",
                             (now, now, task["task_id"]),
                         )
+                continue
+
+            if str(task["task_id"]) not in task_ids_with_memory:
+                if task.get("status") == "active":
+                    active_work_without_memory_detected += 1
+                    if archive_work_without_memory_active:
+                        archived_work_without_memory_tasks += 1
+                        changed_task_ids.add(task["task_id"])
+                        if not dry_run:
+                            conn.execute(
+                                "UPDATE tasks SET status = 'archived', archived_at = COALESCE(archived_at, ?), updated_at = ? WHERE task_id = ?",
+                                (now, now, task["task_id"]),
+                            )
+                elif task.get("status") == "archived":
+                    archived_work_without_memory_detected += 1
+                    if prune_work_without_memory_archived:
+                        archived_work_without_memory_task_ids_to_delete.append(str(task["task_id"]))
         if prune_non_work_archived and archived_non_work_task_ids_to_delete:
             deleted_archived_non_work_tasks = len(archived_non_work_task_ids_to_delete)
             if not dry_run:
@@ -2270,11 +2493,20 @@ def normalize_tasks(
                     f"DELETE FROM tasks WHERE task_id IN ({placeholders})",
                     archived_non_work_task_ids_to_delete,
                 )
+        if prune_work_without_memory_archived and archived_work_without_memory_task_ids_to_delete:
+            deleted_archived_work_without_memory_tasks = len(archived_work_without_memory_task_ids_to_delete)
+            if not dry_run:
+                placeholders = ",".join("?" for _ in archived_work_without_memory_task_ids_to_delete)
+                conn.execute(
+                    f"DELETE FROM tasks WHERE task_id IN ({placeholders})",
+                    archived_work_without_memory_task_ids_to_delete,
+                )
         if not dry_run:
             conn.commit()
 
     return {
         "scanned_tasks": len(rows),
+        "rebuilt_cache_count": rebuilt_cache_count,
         "updated_titles": updated_titles,
         "reclassified_non_work": kinds_reclassified,
         "active_non_work_detected": active_non_work_detected,
@@ -2282,6 +2514,10 @@ def normalize_tasks(
         "archived_tasks": archived_tasks,
         "deleted_archived_non_work_tasks": deleted_archived_non_work_tasks,
         "deleted_archived_non_work_memory": deleted_archived_non_work_memory,
+        "active_work_without_memory_detected": active_work_without_memory_detected,
+        "archived_work_without_memory_detected": archived_work_without_memory_detected,
+        "archived_work_without_memory_tasks": archived_work_without_memory_tasks,
+        "deleted_archived_work_without_memory_tasks": deleted_archived_work_without_memory_tasks,
         "changed_tasks": len(changed_task_ids),
     }
 
@@ -2451,14 +2687,6 @@ def resolve_task(payload: TaskResolutionRequest) -> dict[str, Any]:
 
 
 async def verify_api_key(api_key: Optional[str] = Depends(api_key_header)):
-    if not ADMIN_API_KEY and not AGENT_KEYS_JSON.strip():
-        return {
-            "actor_type": "anonymous",
-            "actor_label": "anonymous",
-            "agent_id": None,
-            "scopes": ["admin"],
-            "is_admin": True,
-        }
     if api_key is None:
         raise HTTPException(status_code=401, detail="X-API-Key header is required")
     if ADMIN_API_KEY and secrets.compare_digest(api_key, ADMIN_API_KEY):
@@ -2473,13 +2701,18 @@ async def verify_api_key(api_key: Optional[str] = Depends(api_key_header)):
     if not key or key.get("status") != "active":
         raise HTTPException(status_code=401, detail="Invalid API key")
     touch_api_key(key["key_id"])
+    scopes = key.get("scopes") or []
+    is_admin = "admin" in scopes
+    if not is_admin and not key.get("user_id"):
+        raise HTTPException(status_code=403, detail="Non-admin API keys must be bound to a user_id")
     return {
         "actor_type": "agent_key",
         "actor_label": key.get("label"),
         "agent_id": key.get("agent_id"),
-        "user_id": DEFAULT_USER_ID,
-        "scopes": key.get("scopes") or [],
-        "is_admin": False,
+        "user_id": key.get("user_id"),
+        "project_ids": key.get("project_ids") or [],
+        "scopes": scopes,
+        "is_admin": is_admin,
     }
 
 
@@ -2551,9 +2784,11 @@ def healthz(auth: dict[str, Any] = Depends(verify_api_key)):
 def add_memory(payload: MemoryCreate, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "store")
     payload.user_id = enforce_user_identity(auth, payload.user_id)
+    enforce_payload_project_identity(auth, payload)
     if not any([payload.user_id, payload.agent_id, payload.run_id]):
         raise HTTPException(status_code=400, detail="At least one identifier is required")
     payload.agent_id = enforce_agent_identity(auth, payload.agent_id)
+    payload.metadata = merge_project_id_into_metadata(payload.project_id, payload.metadata)
     result = store_memory_with_governance(
         messages=[m.model_dump() for m in payload.messages],
         user_id=payload.user_id,
@@ -2586,21 +2821,35 @@ def get_memories(
     user_id: Optional[str] = None,
     run_id: Optional[str] = None,
     agent_id: Optional[str] = None,
+    project_id: Optional[str] = None,
     auth: dict[str, Any] = Depends(verify_api_key),
 ):
     require_scope(auth, "search")
     user_id = enforce_user_identity(auth, user_id)
+    project_id = enforce_project_identity(auth, project_id)
     if not any([user_id, run_id, agent_id]):
         raise HTTPException(status_code=400, detail="At least one identifier is required")
     params = {k: v for k, v in {"user_id": user_id, "run_id": run_id, "agent_id": agent_id}.items() if v is not None}
-    return get_memory_backend().get_all(**params)
+    result = get_memory_backend().get_all(**params)
+    if project_id is None:
+        return result
+    raw_items = result.get("results", []) if isinstance(result, dict) else result
+    filtered = [
+        item
+        for item in raw_items
+        if normalize_text(str((item.get("metadata") or {}).get("project_id") or "")) == project_id
+    ]
+    return {"results": filtered}
 
 
 @app.get("/memories/{memory_id}")
 @app.get("/v1/memories/{memory_id}")
 def get_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "search")
-    return get_memory_backend().get(memory_id)
+    item = get_memory_backend().get(memory_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return ensure_memory_item_access(auth, item)
 
 
 @app.post("/search")
@@ -2608,6 +2857,8 @@ def get_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
 def search_memories(payload: SearchRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "search")
     payload.user_id = enforce_user_identity(auth, payload.user_id)
+    payload.project_id = enforce_project_identity(auth, payload.project_id)
+    payload.filters = merge_project_id_into_filters(payload.project_id, payload.filters)
     result = hybrid_search(
         payload.query,
         user_id=payload.user_id,
@@ -2633,6 +2884,10 @@ def search_memories(payload: SearchRequest, auth: dict[str, Any] = Depends(verif
 @app.delete("/v1/memories/{memory_id}")
 def delete_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "forget")
+    item = get_memory_backend().get(memory_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Memory not found")
+    item = ensure_memory_item_access(auth, item)
     get_memory_backend().delete(memory_id=memory_id)
     delete_cached_memory(memory_id)
     write_audit(
@@ -2640,6 +2895,8 @@ def delete_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)
         actor_label=auth.get("actor_label"),
         actor_agent_id=auth.get("agent_id"),
         event_type="memory_delete",
+        user_id=item.get("user_id"),
+        project_id=(item.get("metadata") or {}).get("project_id"),
         detail={"memory_id": memory_id},
     )
     return {"message": "deleted"}
@@ -2650,6 +2907,7 @@ def delete_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)
 def task_resolution(payload: TaskResolutionRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
     payload.user_id = enforce_user_identity(auth, payload.user_id)
+    enforce_payload_project_identity(auth, payload)
     payload.agent_id = enforce_agent_identity(auth, payload.agent_id)
     result = resolve_task(payload)
     write_audit(
@@ -2670,6 +2928,7 @@ def task_resolution(payload: TaskResolutionRequest, auth: dict[str, Any] = Depen
 def memory_route(payload: MemoryRouteRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "route")
     payload.user_id = enforce_user_identity(auth, payload.user_id)
+    enforce_payload_project_identity(auth, payload)
     payload.agent_id = enforce_agent_identity(auth, payload.agent_id)
     result = route_memory(payload)
     write_audit(
@@ -2691,6 +2950,7 @@ def memory_route(payload: MemoryRouteRequest, auth: dict[str, Any] = Depends(ver
 def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
     payload.user_id = enforce_user_identity(auth, payload.user_id)
+    enforce_payload_project_identity(auth, payload)
     payload.agent_id = enforce_agent_identity(auth, payload.agent_id)
     resolution = None
     task_id = payload.task_id
@@ -2728,17 +2988,6 @@ def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depe
             "store_task_memory": False,
         }
 
-    task = upsert_task(
-        task_id=task_id,
-        user_id=payload.user_id,
-        project_id=payload.project_id,
-        title=title or task_id,
-        source_agent=payload.agent_id,
-        last_summary=structured["summary"] or payload.summary,
-        aliases=[],
-    )
-    task["task_kind"] = task_kind
-
     category_map = {
         "summary": "handoff",
         "progress": "progress",
@@ -2760,6 +3009,27 @@ def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depe
             origin="task_summary",
         ),
     )
+
+    if not approved_fields:
+        return {
+            "action": "skipped",
+            "reason": "no_task_memory_fields_accepted",
+            "resolution": resolution,
+            "task_kind": task_kind,
+            "governance": governance_decisions,
+            "store_task_memory": False,
+        }
+
+    task = upsert_task(
+        task_id=task_id,
+        user_id=payload.user_id,
+        project_id=payload.project_id,
+        title=title or task_id,
+        source_agent=payload.agent_id,
+        last_summary=structured["summary"] or payload.summary,
+        aliases=[],
+    )
+    task["task_kind"] = task_kind
 
     stored = []
     for field, value in approved_fields.items():
@@ -2801,6 +3071,7 @@ def list_tasks(
 ):
     require_scope(auth, "task")
     user_id = enforce_user_identity(auth, user_id)
+    project_id = enforce_project_identity(auth, project_id)
     if user_id is None and not auth.get("is_admin"):
         raise HTTPException(status_code=400, detail="user_id is required for non-admin keys")
     tasks, next_cursor, has_more = fetch_tasks_page(
@@ -2833,7 +3104,7 @@ def get_task(task_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
         ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Task not found")
-    task = dict(row)
+    task = ensure_task_row_access(auth, row)
     task["aliases"] = json.loads(task.pop("aliases_json") or "[]")
     task["title"] = task_display_title(task)
     task["display_title"] = task["title"]
@@ -2846,6 +3117,14 @@ def get_task(task_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
 def close_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
     with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT task_id, user_id, project_id, title, aliases_json, status, last_summary, source_agent, owner_agent, priority, created_at, updated_at, closed_at, archived_at FROM tasks WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found")
+        ensure_task_row_access(auth, row)
         now = utcnow_iso()
         cursor = conn.execute(
             "UPDATE tasks SET status = 'closed', closed_at = ?, updated_at = ? WHERE task_id = ? AND status != 'archived'",
@@ -2870,6 +3149,14 @@ def close_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any]
 def archive_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
     with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT task_id, user_id, project_id, title, aliases_json, status, last_summary, source_agent, owner_agent, priority, created_at, updated_at, closed_at, archived_at FROM tasks WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found")
+        ensure_task_row_access(auth, row)
         now = utcnow_iso()
         cursor = conn.execute(
             "UPDATE tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE task_id = ?",
@@ -2898,7 +3185,10 @@ def tasks_normalize(payload: TaskNormalizeRequest, auth: dict[str, Any] = Depend
         project_id=payload.project_id,
         archive_non_work_active=payload.archive_non_work_active,
         prune_non_work_archived=payload.prune_non_work_archived,
+        archive_work_without_memory_active=payload.archive_work_without_memory_active,
+        prune_work_without_memory_archived=payload.prune_work_without_memory_archived,
         dry_run=payload.dry_run,
+        refresh_cache=True,
     )
     write_audit(
         actor_type=auth["actor_type"],
@@ -2912,6 +3202,8 @@ def tasks_normalize(payload: TaskNormalizeRequest, auth: dict[str, Any] = Depend
             "dry_run": payload.dry_run,
             "archive_non_work_active": payload.archive_non_work_active,
             "prune_non_work_archived": payload.prune_non_work_archived,
+            "archive_work_without_memory_active": payload.archive_work_without_memory_active,
+            "prune_work_without_memory_archived": payload.prune_work_without_memory_archived,
         },
     )
     return {
@@ -2935,6 +3227,7 @@ def metrics(auth: dict[str, Any] = Depends(verify_api_key)):
 def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
     ensure_task_db()
+    rebuilt_cache_count = rebuild_memory_cache(user_id=payload.user_id, run_id=None, agent_id=None)
     duplicate_memory_ids: list[str] = []
     noise_memory_ids: list[str] = []
     rewrite_rows: list[dict[str, Any]] = []
@@ -2948,6 +3241,10 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         "archived_non_work_detected": 0,
         "deleted_archived_non_work_tasks": 0,
         "deleted_archived_non_work_memory": 0,
+        "active_work_without_memory_detected": 0,
+        "archived_work_without_memory_detected": 0,
+        "archived_work_without_memory_tasks": 0,
+        "deleted_archived_work_without_memory_tasks": 0,
         "changed_tasks": 0,
     }
     if payload.normalize_task_state:
@@ -2956,7 +3253,10 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
             project_id=payload.project_id,
             archive_non_work_active=True,
             prune_non_work_archived=payload.prune_non_work_archived,
+            archive_work_without_memory_active=payload.archive_work_without_memory_active,
+            prune_work_without_memory_archived=payload.prune_work_without_memory_archived,
             dry_run=payload.dry_run,
+            refresh_cache=False,
         )
     with sqlite3.connect(TASK_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -3026,6 +3326,7 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         for memory_id in noise_memory_ids:
             get_memory_backend().delete(memory_id=memory_id)
             delete_cached_memory(memory_id)
+        rewrite_failures: list[str] = []
         for row in rewrite_rows:
             original_memory_id = str(row["memory_id"])
             if original_memory_id in duplicate_id_set:
@@ -3037,18 +3338,18 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
                 "task_id": row.get("task_id") or None,
                 "source_agent": row.get("source_agent") or None,
             }
-            get_memory_backend().delete(memory_id=original_memory_id)
-            delete_cached_memory(original_memory_id)
-            rewritten = get_memory_backend().add(
-                messages=[{"role": "user", "content": str(row["canonical_text"])}],
-                user_id=row.get("user_id"),
-                run_id=row.get("run_id"),
-                agent_id=row.get("agent_id"),
-                metadata=metadata,
-                infer=False,
-            )
-            rewritten_id = extract_memory_id(rewritten)
-            if rewritten_id:
+            try:
+                rewritten = get_memory_backend().add(
+                    messages=[{"role": "user", "content": str(row["canonical_text"])}],
+                    user_id=row.get("user_id"),
+                    run_id=row.get("run_id"),
+                    agent_id=row.get("agent_id"),
+                    metadata=metadata,
+                    infer=False,
+                )
+                rewritten_id = extract_memory_id(rewritten)
+                if not rewritten_id:
+                    raise RuntimeError("rewrite did not return a memory id")
                 cache_memory_record(
                     memory_id=rewritten_id,
                     text=str(row["canonical_text"]),
@@ -3057,12 +3358,20 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
                     agent_id=row.get("agent_id"),
                     metadata=metadata,
                 )
+                get_memory_backend().delete(memory_id=original_memory_id)
+                delete_cached_memory(original_memory_id)
+            except Exception:
+                logger.warning("Failed to rewrite canonical memory %s", original_memory_id, exc_info=True)
+                rewrite_failures.append(original_memory_id)
+        if rewrite_failures:
+            raise RuntimeError(f"Failed to rewrite canonical memories: {rewrite_failures[:5]}")
         for memory_id in duplicate_memory_ids:
             get_memory_backend().delete(memory_id=memory_id)
             delete_cached_memory(memory_id)
     archived_tasks_count = task_normalize_result["archived_tasks"] + closed_tasks_archived
     result = {
         "dry_run": payload.dry_run,
+        "rebuilt_cache_count": rebuilt_cache_count,
         "duplicate_long_term_count": len(duplicate_memory_ids),
         "canonicalized_long_term_count": canonicalized_long_term_count,
         "deleted_noise_count": len(noise_memory_ids),
@@ -3094,10 +3403,14 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
 @app.post("/v1/agent-keys")
 def agent_keys_create(payload: AgentKeyCreateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
+    if "admin" not in payload.scopes and not payload.user_id:
+        raise HTTPException(status_code=400, detail="Non-admin API keys require user_id")
     return create_agent_key(
         agent_id=payload.agent_id,
         label=payload.label,
         scopes=payload.scopes,
+        user_id=payload.user_id,
+        project_ids=payload.project_ids,
         token=payload.token,
     )
 
