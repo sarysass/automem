@@ -1998,6 +1998,102 @@ def lexical_score(query: str, text: str) -> float:
     return overlap / union if union else 0.0
 
 
+def fetch_task_search_context(
+    *,
+    user_id: Optional[str],
+    project_id: Optional[str],
+    task_ids: Optional[list[str]] = None,
+) -> dict[str, dict[str, Any]]:
+    ensure_task_db()
+    query = "SELECT task_id, title, aliases_json, status, project_id FROM tasks WHERE 1=1"
+    params: list[Any] = []
+    if user_id is not None:
+        query += " AND user_id = ?"
+        params.append(user_id)
+    if project_id is not None:
+        query += " AND project_id IS ?"
+        params.append(project_id)
+    if task_ids:
+        placeholders = ",".join("?" for _ in task_ids)
+        query += f" AND task_id IN ({placeholders})"
+        params.extend(task_ids)
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(query, params).fetchall()
+    context: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        context[str(row["task_id"])] = {
+            "title": str(row["title"] or ""),
+            "aliases": json.loads(row["aliases_json"] or "[]"),
+            "status": str(row["status"] or "active"),
+            "project_id": row["project_id"],
+        }
+    return context
+
+
+def matched_filter_fields(item: dict[str, Any], filters: Optional[dict[str, Any]]) -> set[str]:
+    if not filters:
+        return set()
+    metadata = item.get("metadata") or {}
+    matched: set[str] = set()
+    for field in ("project_id", "category", "domain", "task_id", "source_agent"):
+        expected = filters.get(field)
+        if expected is None:
+            continue
+        actual = metadata.get(field)
+        if normalize_text(str(actual or "")) == normalize_text(str(expected)):
+            matched.add(field)
+    return matched
+
+
+def merge_search_candidate(
+    by_id: dict[str, dict[str, Any]],
+    item: dict[str, Any],
+    *,
+    matched_by: str,
+    matched_fields: Optional[set[str]] = None,
+    matched_terms: Optional[list[str]] = None,
+) -> None:
+    item_id = str(item.get("id") or "")
+    if not item_id:
+        return
+    existing = by_id.get(item_id)
+    if existing is None:
+        existing = {**item}
+        existing["_matched_by"] = set()
+        existing["_matched_fields"] = set()
+        existing["_matched_terms"] = set()
+        existing["_status"] = "active"
+        by_id[item_id] = existing
+    else:
+        existing["score"] = max(float(existing.get("score", 0.0)), float(item.get("score", 0.0)))
+    existing["_matched_by"].add(matched_by)
+    if matched_fields:
+        existing["_matched_fields"].update(matched_fields)
+    if matched_terms:
+        existing["_matched_terms"].update(normalize_text(term) for term in matched_terms if normalize_text(term))
+
+
+def finalize_search_result(item: dict[str, Any]) -> dict[str, Any]:
+    matched_by = sorted(item.pop("_matched_by", set()))
+    matched_fields = sorted(item.pop("_matched_fields", set()))
+    matched_terms = sorted(item.pop("_matched_terms", set()))
+    status = str(item.pop("_status", "active") or "active")
+    result = {**item}
+    result["source_memory_id"] = result.get("id")
+    result["matched_by"] = matched_by
+    result["matched_fields"] = matched_fields
+    result["status"] = status
+    result["explainability"] = {
+        "matched_by": matched_by,
+        "matched_fields": matched_fields,
+        "matched_terms": matched_terms,
+        "source_memory_id": result.get("id"),
+        "status": status,
+    }
+    return result
+
+
 def rerank_results(query: str, items: list[dict[str, Any]], *, profile: dict[str, Any], top_k: int = 10) -> list[dict[str, Any]]:
     now = now_epoch()
     normalized_query = normalize_text(query).lower()
@@ -2010,6 +2106,8 @@ def rerank_results(query: str, items: list[dict[str, Any]], *, profile: dict[str
         meta = item.get("metadata") or {}
         vector = float(item.get("score", 0.0))
         lexical = max((lexical_score(variant, text) for variant in query_variants), default=0.0)
+        matched_fields = set(item.get("_matched_fields") or set())
+        matched_by = set(item.get("_matched_by") or set())
         exact_bonus = 0.0
         if normalized_query and normalized_query in normalized_text:
             exact_bonus += 0.22
@@ -2083,6 +2181,15 @@ def rerank_results(query: str, items: list[dict[str, Any]], *, profile: dict[str
                 final_score += 0.24
             else:
                 final_score -= 0.22
+            if "task_title" in matched_fields:
+                final_score += 0.26
+            if "task_aliases" in matched_fields:
+                final_score += 0.32
+
+        if "metadata" in matched_by:
+            final_score += 0.08
+        if "semantic" in matched_by and "lexical" in matched_by:
+            final_score += 0.04
 
         reranked.append({**item, "score": round(final_score, 6)})
     reranked.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
@@ -2146,8 +2253,21 @@ def hybrid_search(
         mode = "cache_only"
     by_id: dict[str, dict[str, Any]] = {}
     for item in candidates:
-        if item.get("id"):
-            by_id[item["id"]] = item
+        filter_fields = matched_filter_fields(item, effective_filters)
+        merge_search_candidate(
+            by_id,
+            item,
+            matched_by="semantic",
+            matched_fields={"text"} | filter_fields,
+            matched_terms=profile.get("query_variants"),
+        )
+        if filter_fields:
+            merge_search_candidate(
+                by_id,
+                item,
+                matched_by="metadata",
+                matched_fields=filter_fields,
+            )
 
     query_tokens = sorted(task_tokens(query))
     query_variants = profile.get("query_variants") or [normalize_text(query)]
@@ -2218,25 +2338,127 @@ def hybrid_search(
                 lex = max(lex, 0.65)
             if lex <= 0:
                 continue
-            item_id = item["id"]
-            if item_id in by_id:
-                by_id[item_id]["score"] = max(float(by_id[item_id].get("score", 0.0)), lex)
-            else:
-                by_id[item_id] = {**item, "score": lex}
-    reranked = rerank_results(query, list(by_id.values()), profile=profile, top_k=max(1, min(limit, 50)))
+            merge_search_candidate(
+                by_id,
+                {**item, "score": lex},
+                matched_by="lexical",
+                matched_fields={"text"} | matched_filter_fields(item, effective_filters),
+                matched_terms=query_variants,
+            )
+            filter_fields = matched_filter_fields(item, effective_filters)
+            if filter_fields:
+                merge_search_candidate(
+                    by_id,
+                    {**item, "score": lex},
+                    matched_by="metadata",
+                    matched_fields=filter_fields,
+                )
+
     task_subject = normalize_text(str(profile.get("task_subject") or ""))
+    if profile.get("intent") == "task_lookup" and task_subject:
+        task_context = fetch_task_search_context(
+            user_id=user_id,
+            project_id=effective_filters.get("project_id"),
+        )
+        matched_task_fields: dict[str, set[str]] = {}
+        for task_id, task in task_context.items():
+            fields: set[str] = set()
+            if task_subject_matches(task.get("title") or "", task_subject):
+                fields.add("task_title")
+            aliases = [alias for alias in task.get("aliases") or [] if isinstance(alias, str)]
+            if any(task_subject_matches(alias, task_subject) for alias in aliases):
+                fields.add("task_aliases")
+            if fields:
+                matched_task_fields[task_id] = fields
+
+        if matched_task_fields:
+            placeholders = ",".join("?" for _ in matched_task_fields)
+            sql = """
+                SELECT
+                    c.memory_id AS id,
+                    c.user_id,
+                    c.run_id,
+                    c.agent_id,
+                    c.text AS memory,
+                    c.created_at,
+                    json_object(
+                        'domain', c.domain,
+                        'category', c.category,
+                        'project_id', c.project_id,
+                        'task_id', c.task_id,
+                        'source_agent', c.source_agent
+                    ) AS metadata_json
+                FROM memory_cache c
+                WHERE c.task_id IN (
+            """ + placeholders + ")"
+            sql_params = list(matched_task_fields.keys())
+            if user_id is not None:
+                sql += " AND c.user_id = ?"
+                sql_params.append(user_id)
+            if effective_filters.get("project_id"):
+                sql += " AND c.project_id = ?"
+                sql_params.append(effective_filters["project_id"])
+            if effective_filters.get("category"):
+                sql += " AND c.category = ?"
+                sql_params.append(effective_filters["category"])
+            if effective_filters.get("domain"):
+                sql += " AND c.domain = ?"
+                sql_params.append(effective_filters["domain"])
+            with sqlite3.connect(TASK_DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(sql, sql_params).fetchall()
+            for row in rows:
+                item = dict(row)
+                item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+                metadata = item.get("metadata") or {}
+                match_fields = matched_task_fields.get(str(metadata.get("task_id") or ""), set())
+                merge_search_candidate(
+                    by_id,
+                    {**item, "score": max(float(item.get("score", 0.0)), 0.72)},
+                    matched_by="metadata",
+                    matched_fields=set(match_fields) | matched_filter_fields(item, effective_filters),
+                    matched_terms=[task_subject],
+                )
+
+    task_context = fetch_task_search_context(
+        user_id=user_id,
+        project_id=effective_filters.get("project_id"),
+        task_ids=sorted(
+            {
+                str((item.get("metadata") or {}).get("task_id") or "")
+                for item in by_id.values()
+                if (item.get("metadata") or {}).get("task_id")
+            }
+        ),
+    )
+    for item in by_id.values():
+        metadata = item.get("metadata") or {}
+        task_id = str(metadata.get("task_id") or "")
+        if task_id and task_id in task_context:
+            item["_status"] = task_context[task_id]["status"]
+        else:
+            item["_status"] = "active"
+    reranked = rerank_results(query, list(by_id.values()), profile=profile, top_k=max(1, min(limit, 50)))
     if profile.get("intent") == "task_lookup" and task_subject:
         reranked = [
             item for item in reranked if task_subject_matches(item.get("memory") or item.get("text") or "", task_subject)
+            or any(field in {"task_title", "task_aliases"} for field in item.get("_matched_fields", set()))
         ]
+    finalized = [finalize_search_result(item) for item in reranked]
+    source_counts = {"semantic": 0, "lexical": 0, "metadata": 0}
+    for item in finalized:
+        for source in item.get("matched_by", []):
+            if source in source_counts:
+                source_counts[source] += 1
     return {
-        "results": reranked,
+        "results": finalized,
         "meta": {
             "candidate_count": len(by_id),
             "limit": max(1, min(limit, 50)),
             "mode": mode,
             "intent": profile["intent"],
             "effective_domain": profile["effective_domain"],
+            "hybrid_sources": source_counts,
         },
     }
 
@@ -2875,7 +3097,19 @@ def search_memories(payload: SearchRequest, auth: dict[str, Any] = Depends(verif
         user_id=payload.user_id,
         project_id=(payload.filters or {}).get("project_id") if payload.filters else None,
         route=None,
-        detail={"query": payload.query, "meta": result.get("meta", {})},
+        detail={
+            "query": payload.query,
+            "meta": result.get("meta", {}),
+            "top_matches": [
+                {
+                    "source_memory_id": item.get("source_memory_id"),
+                    "matched_by": item.get("matched_by"),
+                    "matched_fields": item.get("matched_fields"),
+                    "status": item.get("status"),
+                }
+                for item in result.get("results", [])[:5]
+            ],
+        },
     )
     return result
 
