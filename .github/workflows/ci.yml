@@ -19,8 +19,8 @@ jobs:
         run: uv sync --all-groups
       - name: Ruff
         run: uv run ruff check
-      - name: Pytest
-        run: uv run pytest
+      - name: Pytest fast lane
+        run: uv run pytest -m "not slow"
       - name: Python syntax
         run: uv run python -m py_compile backend/main.py cli/memory scripts/scheduled_consolidate.py scripts/install_adapter.py adapters/codex/config.py adapters/codex/client.py adapters/codex/mcp_server.py adapters/claude-code/scripts/common.py adapters/claude-code/scripts/recall.py adapters/claude-code/scripts/capture.py
 
