@@ -6,6 +6,7 @@ from typing import Any
 class FakeMemory:
     def __init__(self) -> None:
         self.records: dict[str, dict[str, Any]] = {}
+        self._next_id = 1
 
     def _extract_text(self, messages: Any) -> str:
         if isinstance(messages, str):
@@ -21,7 +22,8 @@ class FakeMemory:
         return str(messages)
 
     def add(self, messages: Any, **params: Any) -> dict[str, Any]:
-        memory_id = f"mem_{len(self.records) + 1}"
+        memory_id = f"mem_{self._next_id}"
+        self._next_id += 1
         text = self._extract_text(messages)
         record = {
             "id": memory_id,

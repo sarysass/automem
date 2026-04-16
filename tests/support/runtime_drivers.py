@@ -10,6 +10,8 @@ from typing import Any, Mapping
 
 from tests.support.live_backend import LiveBackendHarness, repo_root
 
+RUNTIME_SCRIPT_TIMEOUT_SECONDS = 60
+
 
 @dataclass(frozen=True)
 class RuntimeSubprocessResult:
@@ -18,12 +20,18 @@ class RuntimeSubprocessResult:
     exit_code: int
     stdout: str
     stderr: str
-    payload: dict[str, Any]
+    payload: dict[str, Any] | None
 
     def require_success(self) -> RuntimeSubprocessResult:
         if self.exit_code != 0:
             raise RuntimeError(
                 f"Command {' '.join(self.command)} failed with exit code {self.exit_code}\n"
+                f"stdout:\n{self.stdout}\n"
+                f"stderr:\n{self.stderr}"
+            )
+        if self.payload is None:
+            raise RuntimeError(
+                f"Command {' '.join(self.command)} succeeded without a JSON payload\n"
                 f"stdout:\n{self.stdout}\n"
                 f"stderr:\n{self.stderr}"
             )
@@ -44,7 +52,7 @@ def _new_lock_path(temp_dir: Path, stem: str) -> Path:
     return temp_dir / f"{stem}.{uuid.uuid4().hex}.lock"
 
 
-def _parse_payload(command: tuple[str, ...], stdout: str, stderr: str) -> dict[str, Any]:
+def _parse_payload(command: tuple[str, ...], stdout: str, stderr: str) -> dict[str, Any] | None:
     for line in reversed(stdout.splitlines()):
         candidate = line.strip()
         if not candidate:
@@ -60,11 +68,7 @@ def _parse_payload(command: tuple[str, ...], stdout: str, stderr: str) -> dict[s
             f"stdout:\n{stdout}\n"
             f"stderr:\n{stderr}"
         )
-    raise RuntimeError(
-        f"No JSON payload found in stdout from {' '.join(command)}\n"
-        f"stdout:\n{stdout}\n"
-        f"stderr:\n{stderr}"
-    )
+    return None
 
 
 def _run_runtime_script(
@@ -77,21 +81,33 @@ def _run_runtime_script(
     env = os.environ.copy()
     env.update(_base_runtime_env(live_backend))
     env.update(env_overrides)
-    completed = subprocess.run(
-        command,
-        cwd=repo_root(),
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=repo_root(),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=RUNTIME_SCRIPT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or exc.output or ""
+        stderr = exc.stderr or ""
+        raise RuntimeError(
+            f"Command {' '.join(command)} timed out after {RUNTIME_SCRIPT_TIMEOUT_SECONDS}s\n"
+            f"stdout:\n{stdout}\n"
+            f"stderr:\n{stderr}"
+        ) from exc
+
+    payload = _parse_payload(command, completed.stdout, completed.stderr)
     return RuntimeSubprocessResult(
         command=command,
         env_overrides=dict(env_overrides),
         exit_code=completed.returncode,
         stdout=completed.stdout,
         stderr=completed.stderr,
-        payload=_parse_payload(command, completed.stdout, completed.stderr),
+        payload=payload,
     )
 
 

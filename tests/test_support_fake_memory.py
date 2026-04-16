@@ -30,3 +30,22 @@ def test_backend_module_uses_shared_fake_memory(backend_module) -> None:
     fake_memory_module = import_module("tests.support.fake_memory")
 
     assert isinstance(backend_module.MEMORY_BACKEND, fake_memory_module.FakeMemory)
+
+
+def test_fake_memory_ids_do_not_get_reused_after_delete() -> None:
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    first = memory.add("alpha")["id"]
+    second = memory.add("beta")["id"]
+    third = memory.add("gamma")["id"]
+
+    memory.delete(second)
+    replacement = memory.add("delta")
+
+    assert first == "mem_1"
+    assert second == "mem_2"
+    assert third == "mem_3"
+    assert replacement["id"] == "mem_4"
+    assert memory.get("mem_3")["memory"] == "gamma"
+    assert memory.get("mem_4")["memory"] == "delta"

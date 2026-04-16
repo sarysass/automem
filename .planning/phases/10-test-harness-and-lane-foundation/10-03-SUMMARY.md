@@ -83,10 +83,10 @@ Each task was committed atomically:
 
 **1. [Rule 3 - Blocking] Sanitized private-path references that broke the default fast lane**
 - **Found during:** Plan-level verification after Task 2
-- **Issue:** `uv run pytest -m "not slow"` failed in `tests/test_repository_layout.py::test_repository_has_no_legacy_product_names_or_private_paths` because tracked planning docs and ignored local artifacts still contained absolute `/Users/shali...` paths.
+- **Issue:** `uv run pytest -m "not slow"` failed in `tests/test_repository_layout.py::test_repository_has_no_legacy_product_names_or_private_paths` because tracked planning docs and ignored local artifacts still contained absolute home-directory paths.
 - **Fix:** Replaced tracked absolute repo links with relative links or generic wording, and sanitized matching ignored local files (`.claude/settings.local.json`, `.planning/phases/10-test-harness-and-lane-foundation/10-RESEARCH.md`) in the working tree so the repository scan no longer finds private paths.
 - **Files modified:** `.planning/PROJECT.md`, `.planning/research/SUMMARY.md`, `.planning/phases/10-test-harness-and-lane-foundation/deferred-items.md`, `.planning/phases/10-test-harness-and-lane-foundation/10-02-SUMMARY.md`, plus ignored local `.claude/settings.local.json` and `.planning/phases/10-test-harness-and-lane-foundation/10-RESEARCH.md`
-- **Verification:** `rg -n '/Users/shali|100\\.76\\.210\\.36|memory-hub|memory-platform' .claude .planning tests pyproject.toml CONTRIBUTING.md .github/workflows/ci.yml README.md docs adapters backend cli scripts` returned no matches; the fast lane then passed with `129 passed, 6 deselected`.
+- **Verification:** A repo-wide privacy-pattern scan returned no matches after the cleanup, and the fast lane then passed with `129 passed, 6 deselected`.
 - **Committed in:** `224f46a` for tracked artifacts; ignored local sanitization remained uncommitted by design
 
 ---
