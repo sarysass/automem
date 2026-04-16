@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Testing Depth & Real-World Regression
-status: planning
-stopped_at: Phase 10 verified complete; Phase 11 ready to plan.
-last_updated: "2026-04-16T17:12:17Z"
-last_activity: 2026-04-17 -- Phase 10 verification passed
+status: executing
+stopped_at: Phase 10 hardening plan 10-04 drafted from adversarial review; ready for `/gsd-execute-phase 10` scoped to 10-04.
+last_updated: "2026-04-16T17:45:00.386Z"
+last_activity: 2026-04-16 -- Phase 10 execution started
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 3
+  completed_phases: 0
+  total_plans: 4
   completed_plans: 3
-  percent: 25
+  percent: 75
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-17)
 
 **Core value:** Turn noisy agent output into trustworthy shared memory and task state that multiple agents can reuse safely.
-**Current focus:** Phase 11 planning for deep-user-workflow-and-scope-regression
+**Current focus:** Phase 10 — test-harness-and-lane-foundation
 
 ## Current Position
 
-Phase: 11 of 13 (Deep User Workflow And Scope Regression)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-04-17 -- Phase 10 verification passed
+Phase: 10 (test-harness-and-lane-foundation) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 10
+Last activity: 2026-04-16 -- Phase 10 execution started
 
-Progress: [█████░░░░░░░░░░░░░░░] 25%
+Progress: [████░░░░░░░░░░░░░░░░] 19%
 
 ## Performance Metrics
 
@@ -82,11 +82,11 @@ Decisions are logged in `.planning/PROJECT.md`. Most relevant now:
 
 ### Pending Todos
 
-None yet.
+- Execute `10-04-PLAN.md`: sentinel payload protocol, FakeMemory faithful text extraction + defensive copies + strict kwargs + injectable clock/score, runtime-driver lock/idempotency stability, env allowlist, `extra_env` contract guard, and two deferred-items entries.
 
 ### Blockers/Concerns
 
-None active. Planning should keep v1.1 focused on harness depth and regression protection, not browser E2E or a `backend/main.py` refactor.
+- Phase 11 planning should wait for 10-04 to land, because Phase 11 workflow tests will otherwise be built on FakeMemory shapes and runtime-driver behaviors that this plan changes.
 
 ## Deferred Items
 
@@ -96,6 +96,6 @@ None active. Planning should keep v1.1 focused on harness depth and regression p
 
 ## Session Continuity
 
-Last session: 2026-04-16T17:12:17Z
-Stopped at: Phase 10 verified complete; Phase 11 ready to plan.
-Resume file: None
+Last session: 2026-04-17T00:00:00Z
+Stopped at: Phase 10 hardening plan 10-04 drafted from adversarial review; ready for `/gsd-execute-phase 10` scoped to 10-04.
+Resume file: .planning/phases/10-test-harness-and-lane-foundation/10-04-PLAN.md

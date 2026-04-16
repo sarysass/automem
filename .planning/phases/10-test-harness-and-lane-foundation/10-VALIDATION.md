@@ -41,6 +41,11 @@ created: 2026-04-16
 | 10-01-01 | 01 | 1 | HARN-01 | T-10-01-01 / T-10-01-02 | Live backend boots with temp state, deterministic fake backend, and real FastAPI lifespan | integration | `uv run pytest -m slow tests/test_harness_foundation_live.py -x` | ❌ W0 | pending |
 | 10-02-01 | 02 | 2 | HARN-02 | T-10-02-01 / T-10-02-02 | Scheduler enqueue and worker run-next flows operate through public runtime entrypoints only | integration | `uv run pytest -m slow tests/test_runtime_entrypoints_live.py -x` | ❌ W0 | pending |
 | 10-03-01 | 03 | 3 | HARN-03 | T-10-03-01 / T-10-03-02 | Fast and slow lanes are selectable without leaking state across suites | integration/config | `uv run pytest tests/test_lane_selection.py -x` | ❌ W0 | pending |
+| 10-04-01 | 04 | 4 | HARN-02 | T-10-04-01 | Runtime driver payload is extracted via an explicit sentinel protocol that survives log noise and pretty-printing | integration | `uv run pytest tests/test_runtime_driver_support.py tests/test_runtime_entrypoints_live.py -x` | ❌ W0 | pending |
+| 10-04-02 | 04 | 4 | HARN-01 | T-10-04-02 | FakeMemory faithfully extracts structured chat content and refuses unknown message shapes | unit | `uv run pytest tests/test_support_fake_memory.py tests/test_harness_foundation_live.py -x` | ❌ W0 | pending |
+| 10-04-03 | 04 | 4 | HARN-01 | T-10-04-03 / T-10-04-04 | FakeMemory returns defensive copies, rejects unknown kwargs, and exposes clock/score injection | unit | `uv run pytest tests/test_support_fake_memory.py tests/test_backend_baseline.py -x` | ❌ W0 | pending |
+| 10-04-04 | 04 | 4 | HARN-02 | T-10-04-05 / T-10-04-06 / T-10-04-07 | Runtime driver helpers have stable lock/idempotency defaults, a guarded extra_env contract, and a minimal env allowlist | integration | `uv run pytest tests/test_runtime_driver_support.py tests/test_runtime_entrypoints_live.py -x` | ❌ W0 | pending |
+| 10-04-05 | 04 | 4 | HARN-03 | n/a | Two strategic items are recorded in `deferred-items.md` with dated rationale | docs | `rg -n "2026-04-17" .planning/phases/10-test-harness-and-lane-foundation/deferred-items.md` | ❌ W0 | pending |
 
 *Status: pending / green / red / flaky*
 
