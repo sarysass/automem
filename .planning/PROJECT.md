@@ -16,7 +16,8 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 - The backend now fails closed by default, binds non-admin keys to real identities, and centralizes governance decisions on the server side.
 - Retrieval, fact lifecycle, and runtime architecture upgrades are live, including explainable hybrid search and the API/worker/MCP split.
 - Foundational verification and milestone-wide Nyquist validation are complete for Phase `01-07`.
-- The current planning state has moved into milestone `v1.1`, which focuses on turning validated behavior claims into durable regression protection through deeper end-to-end and unit test coverage.
+- Phase `10` is verified complete: the repo now has a shared live-process harness, real worker/scheduler runtime coverage, and explicit fast versus slow pytest lanes with passing automation evidence.
+- The current planning state remains in milestone `v1.1`, which now moves on to deeper end-to-end and unit regression coverage in Phase `11`.
 
 ## Requirements
 
@@ -31,6 +32,7 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 - [x] Runtime split between hot-path admission and background governance workers — `v1.0`
 - [x] Foundational verification evidence chain for auth, governance, and consolidation — `v1.0`
 - [x] Milestone-wide validation baseline and Nyquist coverage for completed product phases — `v1.0`
+- [x] Shared live-process harness plus explicit fast/slow regression lanes for backend, worker, and scheduler coverage — `Phase 10 (v1.1)`
 
 ### Active
 
@@ -93,4 +95,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-16 after starting milestone v1.1*
+*Last updated: 2026-04-17 after verifying Phase 10*

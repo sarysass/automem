@@ -75,9 +75,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HARN-01 | Phase 10 | Planned |
-| HARN-02 | Phase 10 | Planned |
-| HARN-03 | Phase 10 | Planned |
+| HARN-01 | Phase 10 | Validated |
+| HARN-02 | Phase 10 | Validated |
+| HARN-03 | Phase 10 | Validated |
 | E2E-01 | Phase 11 | Planned |
 | E2E-02 | Phase 11 | Planned |
 | E2E-03 | Phase 11 | Planned |
@@ -102,4 +102,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-16*
-*Last updated: 2026-04-16 after roadmap creation for milestone v1.1*
+*Last updated: 2026-04-17 after verifying Phase 10*

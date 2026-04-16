@@ -2,41 +2,41 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Testing Depth & Real-World Regression
-status: verifying
-stopped_at: Completed 10-03-PLAN.md
-last_updated: "2026-04-16T16:49:33.834Z"
-last_activity: 2026-04-16
+status: planning
+stopped_at: Phase 10 verified complete; Phase 11 ready to plan.
+last_updated: "2026-04-16T17:12:17Z"
+last_activity: 2026-04-17 -- Phase 10 verification passed
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 100
+  percent: 25
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-16)
+See: `.planning/PROJECT.md` (updated 2026-04-17)
 
 **Core value:** Turn noisy agent output into trustworthy shared memory and task state that multiple agents can reuse safely.
-**Current focus:** Phase 10 — test-harness-and-lane-foundation
+**Current focus:** Phase 11 planning for deep-user-workflow-and-scope-regression
 
 ## Current Position
 
-Phase: 10 (test-harness-and-lane-foundation) — COMPLETE
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-04-16
+Phase: 11 of 13 (Deep User Workflow And Scope Regression)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-04-17 -- Phase 10 verification passed
 
-Progress: [████████████████████] 100%
+Progress: [█████░░░░░░░░░░░░░░░] 25%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 15
+- Total plans completed: 18
 - Average duration: not normalized yet
 - Total execution time: tracked in phase summaries
 
@@ -53,11 +53,12 @@ Progress: [████████████████████] 100%
 | 07 | 1 | - | - |
 | 08 | 4 | - | - |
 | 09 | 4 | - | - |
+| 10 | 3 | - | - |
 
 **Recent Trend:**
 
 - Last 3 plans: Phase 10 shared harness foundation, Phase 10 runtime entrypoint coverage, Phase 10 fast/slow lane governance
-- Trend: Phase 10 is complete and v1.1 is ready to begin Phase 11
+- Trend: Phase 10 is verified complete and v1.1 is ready to begin Phase 11 planning
 
 | Phase 10-test-harness-and-lane-foundation P01 | 8m | 2 tasks | 8 files |
 | Phase 10 P02 | 7m | 2 tasks | 3 files |
@@ -95,6 +96,6 @@ None active. Planning should keep v1.1 focused on harness depth and regression p
 
 ## Session Continuity
 
-Last session: 2026-04-16T16:49:33.833Z
-Stopped at: Completed 10-03-PLAN.md
+Last session: 2026-04-16T17:12:17Z
+Stopped at: Phase 10 verified complete; Phase 11 ready to plan.
 Resume file: None
