@@ -146,11 +146,11 @@ Phases with standard patterns (skip research-phase):
 ## Sources
 
 ### Primary (HIGH confidence)
-- [.planning/PROJECT.md](/Users/shali/projects/AI/automem/.planning/PROJECT.md) — milestone goal, scope, constraints, and active requirements
-- [.planning/research/STACK.md](/Users/shali/projects/AI/automem/.planning/research/STACK.md) — stack additions, versions, harness recommendations, CI lane strategy
-- [.planning/research/FEATURES.md](/Users/shali/projects/AI/automem/.planning/research/FEATURES.md) — table stakes, differentiators, anti-features, and milestone MVP order
-- [.planning/research/ARCHITECTURE.md](/Users/shali/projects/AI/automem/.planning/research/ARCHITECTURE.md) — testing-layer design, preserved boundaries, and build order
-- [.planning/research/PITFALLS.md](/Users/shali/projects/AI/automem/.planning/research/PITFALLS.md) — cross-surface failure modes, sequencing warnings, and risk framing
+- [.planning/PROJECT.md](../PROJECT.md) — milestone goal, scope, constraints, and active requirements
+- [.planning/research/STACK.md](./STACK.md) — stack additions, versions, harness recommendations, CI lane strategy
+- [.planning/research/FEATURES.md](./FEATURES.md) — table stakes, differentiators, anti-features, and milestone MVP order
+- [.planning/research/ARCHITECTURE.md](./ARCHITECTURE.md) — testing-layer design, preserved boundaries, and build order
+- [.planning/research/PITFALLS.md](./PITFALLS.md) — cross-surface failure modes, sequencing warnings, and risk framing
 - FastAPI testing docs — API and lifespan testing patterns
 - coverage.py subprocess docs — subprocess coverage requirements for live-process tests
 - pytest docs — fixtures, monkeypatch, tmp-path isolation, parametrization

@@ -73,7 +73,7 @@ Each task was committed atomically:
 None - plan executed exactly as written.
 
 ## Issues Encountered
-- `uv run pytest -m "not slow"` still fails in `tests/test_repository_layout.py::test_repository_has_no_legacy_product_names_or_private_paths` because pre-existing files (`.claude/settings.local.json` and existing phase docs) contain `/Users/shali` strings. Logged to `.planning/phases/10-test-harness-and-lane-foundation/deferred-items.md` and left out of scope for HARN-02.
+- `uv run pytest -m "not slow"` still fails in `tests/test_repository_layout.py::test_repository_has_no_legacy_product_names_or_private_paths` because pre-existing files (`.claude/settings.local.json` and existing phase docs) contain absolute local home-directory paths. Logged to `.planning/phases/10-test-harness-and-lane-foundation/deferred-items.md` and left out of scope for HARN-02.
 - `pytest` warns that `slow` and `serial` markers are not registered yet. This is expected before Plan `10-03`, which owns lane registration.
 - The Task 2 live proof passed immediately once written because Task 1 plus Phase 10-01 already supplied the needed runtime behavior. The task therefore landed as executable proof coverage rather than requiring an extra implementation commit.
 

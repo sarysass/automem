@@ -56,7 +56,7 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 ## Context
 
 - The current codebase supports multiple adapters and a shared backend contract.
-- v1.0 execution history is archived under [.planning/milestones/v1.0-ROADMAP.md](/Users/shali/projects/AI/automem/.planning/milestones/v1.0-ROADMAP.md).
+- v1.0 execution history is archived under [.planning/milestones/v1.0-ROADMAP.md](./milestones/v1.0-ROADMAP.md).
 - Existing tests cover governance, identity enforcement, scheduled consolidation, and the governance worker runtime split.
 
 ## Constraints
