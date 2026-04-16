@@ -16,7 +16,7 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 - The backend now fails closed by default, binds non-admin keys to real identities, and centralizes governance decisions on the server side.
 - Retrieval, fact lifecycle, and runtime architecture upgrades are live, including explainable hybrid search and the API/worker/MCP split.
 - Foundational verification and milestone-wide Nyquist validation are complete for Phase `01-07`.
-- The current planning state is between milestones: v1.0 is archived, and the next milestone has not been defined yet.
+- The current planning state has moved into milestone `v1.1`, which focuses on turning validated behavior claims into durable regression protection through deeper end-to-end and unit test coverage.
 
 ## Requirements
 
@@ -34,7 +34,9 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 
 ### Active
 
-None yet. Define the next active scope with `$gsd-new-milestone`.
+- [ ] Build a realistic end-to-end regression suite from a deep-user perspective across API, worker, scheduler, search, and task flows
+- [ ] Backfill high-value unit coverage for core rules, edge conditions, and failure-recovery behavior
+- [ ] Prove real behavior with executable tests so capability claims stay grounded in observable outcomes
 
 ### Out of Scope
 
@@ -42,11 +44,14 @@ None yet. Define the next active scope with `$gsd-new-milestone`.
 - Fully generic organization-wide RBAC from day one — phased rollout is safer than premature over-modeling
 - Replacing upstream agent runtimes — automem integrates with them rather than becoming a new agent shell
 
-## Next Milestone Goals
+## Current Milestone: v1.1 Testing Depth & Real-World Regression
 
-- Run `$gsd-new-milestone` to define the post-v1.0 problem statement, requirements, and roadmap.
-- Revisit the deferred `team/org` access model once project-scoped collaboration hardens further.
-- Prioritize the next round of operator, deployment, and product-surface improvements from real usage signals.
+**Goal:** Upgrade the test system from isolated capability checks into realistic workflow regression protection that demonstrates how automem behaves in practice.
+
+**Target features:**
+- High-value end-to-end scenarios that reflect deep-user behavior instead of only endpoint-by-endpoint validation
+- Unit coverage for core rules, permissions, edge cases, and failure-recovery paths
+- Test evidence that turns functional claims into continuously verified reality
 
 ## Context
 
@@ -70,5 +75,22 @@ None yet. Define the next active scope with `$gsd-new-milestone`.
 | Shared identity starts at project scope before team/org scope | Smallest useful step that unlocks safe collaboration | ✓ Good |
 | Tests should lead phase execution | Protects a sensitive backend where regressions are hard to notice manually | ✓ Good |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition**:
+1. Requirements invalidated? -> Move to Out of Scope with reason
+2. Requirements validated? -> Move to Validated with phase reference
+3. New requirements emerged? -> Add to Active
+4. Decisions to log? -> Add to Key Decisions
+5. "What This Is" still accurate? -> Update if drifted
+
+**After each milestone**:
+1. Full review of all sections
+2. Core Value check - still the right priority?
+3. Audit Out of Scope - reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-04-16 after v1.0 milestone close-out*
+*Last updated: 2026-04-16 after starting milestone v1.1*

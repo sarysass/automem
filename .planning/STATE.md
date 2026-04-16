@@ -1,14 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
+milestone: v1.1
+milestone_name: Testing Depth & Real-World Regression
 current_phase: null
 current_phase_name: null
 current_plan: null
-status: milestone_archived
-stopped_at: v1.0 milestone archived; ready to define the next milestone.
-last_updated: "2026-04-16T08:40:00.000Z"
-last_activity: 2026-04-16 -- v1.0 milestone archived; ready for next milestone
+status: defining_requirements
+stopped_at: Milestone v1.1 started; defining requirements after project context update.
+last_updated: "2026-04-16T12:38:00.000Z"
+last_activity: 2026-04-16 -- Milestone v1.1 started; defining requirements
 progress:
   total_phases: 9
   completed_phases: 9
@@ -24,7 +24,7 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-16)
 
 **Core value:** Turn noisy agent output into trustworthy shared memory and task state that multiple agents can reuse safely.
-**Current focus:** Next milestone kickoff after v1.0 archive
+**Current focus:** Defining requirements for milestone v1.1
 
 ## Current Position
 
@@ -33,11 +33,11 @@ Current Phase Name: None
 Total Phases: 9
 Current Plan: None
 Total Plans in Phase: 0
-Milestone: `v1.0` — ARCHIVED
-Status: Ready for `$gsd-new-milestone`
-Last activity: 2026-04-16 -- v1.0 milestone archived; ready for next milestone
+Milestone: `v1.1` — DEFINING REQUIREMENTS
+Status: Defining requirements
+Last activity: 2026-04-16 -- Milestone v1.1 started; defining requirements
 Last Activity: 2026-04-16
-Last Activity Description: v1.0 milestone archived and planning reset for the next cycle
+Last Activity Description: Started milestone v1.1 for testing depth and real-world regression coverage
 
 Progress: 100%
 Progress Bar: [████████████████████]
@@ -67,7 +67,7 @@ Progress Bar: [████████████████████]
 **Recent Trend:**
 
 - Last 3 plans: Phase 09 foundational validation backfill, Phase 09 identity/retrieval validation backfill, Phase 09 fact/runtime validation backfill
-- Trend: v1.0 is archived and the workflow is waiting for the next milestone definition
+- Trend: the previous milestone is archived and the workflow has entered new-milestone requirements definition
 
 ## Accumulated Context
 
@@ -97,6 +97,6 @@ None.
 
 ## Session
 
-Last Date: 2026-04-16 16:40
-Stopped At: v1.0 milestone archived; ready to define the next milestone.
+Last Date: 2026-04-16 20:38
+Stopped At: Milestone v1.1 started; defining requirements after project context update.
 Resume File: None
