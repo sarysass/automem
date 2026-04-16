@@ -8,8 +8,6 @@ from common import (
     load_config,
     load_hook_input,
     load_last_prompt,
-    looks_explicit_long_term,
-    looks_task_like,
 )
 
 
@@ -28,14 +26,12 @@ def main() -> None:
     if not user_prompt:
         return
 
-    explicit_long_term = looks_explicit_long_term(user_prompt)
-    task_like = looks_task_like(user_prompt, assistant_output)
     result = capture_turn(
         cfg,
         message=user_prompt,
         assistant_output=assistant_output,
-        explicit_long_term=explicit_long_term,
-        task_like=task_like,
+        explicit_long_term=False,
+        task_like=False,
         session_id=session_id,
         channel="claude-code/Stop",
     )

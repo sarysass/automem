@@ -33,14 +33,15 @@ export OPENCLAW_AUTOMEM_PROJECT_ID="project-alpha"
 
 ## 安装建议
 
-将本目录复制到 OpenClaw 的扩展目录，例如：
+优先使用仓库自带安装脚本部署到 OpenClaw 扩展目录：
 
 ```bash
-mkdir -p ~/.openclaw/extensions/automem-memory
-cp -R adapters/openclaw/* ~/.openclaw/extensions/automem-memory/
+python scripts/install_adapter.py openclaw --target ~/.openclaw/extensions/automem-memory --force
 ```
 
 然后在 OpenClaw 的本地配置中启用该插件。
+
+如果目标目录属于 `root` 或其他系统用户，不要使用会保留源文件 uid/gid 的部署方式（例如跨机器 `cp -a` / `rsync -a`）。OpenClaw 会把属主异常的插件目录判定为 `suspicious ownership` 并直接屏蔽。
 
 ## 校验命令
 

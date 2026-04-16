@@ -243,42 +243,6 @@ function extractTextsByRole(messages: unknown[] | undefined): { user: string[]; 
   return result;
 }
 
-function isExplicitLongTermRequest(text: string): boolean {
-  const lower = text.toLowerCase();
-  return [
-    "long term",
-    "long-term",
-    "长期记忆",
-    "长期信息",
-    "请记住",
-    "记住：",
-    "记录下面",
-    "记住下面",
-    "记住以下",
-    "记录以下",
-  ].some((token) => lower.includes(token));
-}
-
-function looksTaskLike(userText: string | undefined, assistantText: string | undefined): boolean {
-  const user = normalizeText(userText ?? "").toLowerCase();
-  const assistant = normalizeText(assistantText ?? "").toLowerCase();
-  if (!user && !assistant) {
-    return false;
-  }
-  if (isExplicitLongTermRequest(user)) {
-    return false;
-  }
-  if (isSystemNoiseText(user) || isSystemNoiseText(assistant)) {
-    return false;
-  }
-  if (/\b(next step|next action|blocker|blocked|todo|milestone)\b|下一步|阻塞|待办|里程碑/.test(assistant)) {
-    return true;
-  }
-  const workIntent = /继续|实现|修复|分析|排查|部署|测试|重构|优化|\b(fix|implement|debug|deploy|refactor|optimi[sz]e|test)\b/;
-  const progressSignal = /\b(completed|implemented|fixed|updated|shipped)\b|已完成|完成了|已修复|已更新/;
-  return workIntent.test(user) && progressSignal.test(assistant);
-}
-
 function isSystemNoiseText(text: string): boolean {
   const normalized = normalizeText(text).toLowerCase();
   if (!normalized) {
@@ -817,8 +781,6 @@ const memoryPlugin = {
             assistantOutput: lastAssistant,
             sessionId: sessionKey,
             channel: ctx.trigger || ctx.channelId,
-            explicitLongTerm: lastUser ? isExplicitLongTermRequest(lastUser) : false,
-            taskLike: looksTaskLike(lastUser, lastAssistant) ? true : undefined,
           });
 
           const entries =

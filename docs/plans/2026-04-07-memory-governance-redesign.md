@@ -6,7 +6,7 @@
 
 **Architecture:** Move memory quality decisions into the backend with a hybrid rules-plus-LLM governance layer. Adapters become thin collectors with only minimal local dedupe/noise checks. Online ingestion uses a small structured classifier/judge plus hard-rule fast paths; offline consolidation uses stronger semantic compaction and migration logic. Task summary storage must be gated by task kind and noise classification before any task memory is written.
 
-**Tech Stack:** FastAPI, sqlite task registry, mem0 backend, existing adapter templates (Codex/OpenClaw/OpenCode/Claude Code), structured LLM classification via current backend LLM config, pytest.
+**Tech Stack:** FastAPI, sqlite task registry, automem backend, existing adapter templates (Codex/OpenClaw/OpenCode/Claude Code), structured LLM classification via current backend LLM config, pytest.
 
 ---
 

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import errno
 import json
 import os
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,36 @@ EXPECTED_KEYS = {
     "normalized_tasks_count",
     "task_reclassified_count",
 }
+
+
+def build_lock_path() -> Path:
+    configured = os.environ.get("MEMORY_CONSOLIDATE_LOCK_FILE")
+    if configured:
+        return Path(configured)
+    return Path(os.environ.get("TASK_DB_PATH", Path(__file__).resolve().parents[1] / "data" / "tasks" / "tasks.db")).with_suffix(
+        ".consolidate.lock"
+    )
+
+
+@contextmanager
+def single_run_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd: int | None = None
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode("utf-8"))
+        yield True
+    except OSError as exc:
+        if exc.errno != errno.EEXIST:
+            raise
+        yield False
+    finally:
+        if fd is not None:
+            os.close(fd)
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def load_runtime_env() -> None:
@@ -62,6 +95,14 @@ def build_payload() -> dict[str, Any]:
         "archive_closed_tasks": env_flag("MEMORY_CONSOLIDATE_ARCHIVE_CLOSED_TASKS", True),
         "normalize_task_state": env_flag("MEMORY_CONSOLIDATE_NORMALIZE_TASK_STATE", True),
         "prune_non_work_archived": env_flag("MEMORY_CONSOLIDATE_PRUNE_NON_WORK_ARCHIVED", False),
+        "archive_work_without_memory_active": env_flag(
+            "MEMORY_CONSOLIDATE_ARCHIVE_WORK_WITHOUT_MEMORY_ACTIVE",
+            True,
+        ),
+        "prune_work_without_memory_archived": env_flag(
+            "MEMORY_CONSOLIDATE_PRUNE_WORK_WITHOUT_MEMORY_ARCHIVED",
+            False,
+        ),
         "user_id": os.environ.get("MEMORY_CONSOLIDATE_USER_ID") or None,
         "project_id": os.environ.get("MEMORY_CONSOLIDATE_PROJECT_ID") or None,
     }
@@ -80,21 +121,35 @@ def build_client() -> httpx.Client:
 
 
 def run_consolidation(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    response = client.post("/consolidate", json=payload)
-    if response.status_code != 200:
-        raise RuntimeError(f"consolidate failed with status {response.status_code}: {getattr(response, 'text', '')}")
-    data = response.json()
-    missing = EXPECTED_KEYS - set(data.keys())
-    if missing:
-        raise RuntimeError(f"consolidate response missing expected keys: {sorted(missing)}")
-    return data
+    attempts = max(1, int(os.environ.get("MEMORY_CONSOLIDATE_ATTEMPTS", "3")))
+    retry_delay = max(0.0, float(os.environ.get("MEMORY_CONSOLIDATE_RETRY_DELAY_SECONDS", "1")))
+    last_error: RuntimeError | None = None
+    for attempt in range(1, attempts + 1):
+        response = client.post("/consolidate", json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            missing = EXPECTED_KEYS - set(data.keys())
+            if missing:
+                raise RuntimeError(f"consolidate response missing expected keys: {sorted(missing)}")
+            return data
+        last_error = RuntimeError(
+            f"consolidate failed with status {response.status_code}: {getattr(response, 'text', '')}"
+        )
+        if attempt < attempts:
+            time.sleep(retry_delay)
+    assert last_error is not None
+    raise last_error
 
 
 def main() -> int:
     load_runtime_env()
     payload = build_payload()
-    with build_client() as client:
-        result = run_consolidation(client, payload)
+    with single_run_lock(build_lock_path()) as acquired:
+        if not acquired:
+            print(json.dumps({"status": "skipped", "reason": "lock_exists"}, ensure_ascii=False))
+            return 0
+        with build_client() as client:
+            result = run_consolidation(client, payload)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

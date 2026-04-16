@@ -238,19 +238,6 @@ function shouldAutoCapture(message: string, assistantOutput: string): boolean {
   return true;
 }
 
-function looksTaskLike(message: string, assistantOutput: string): boolean {
-  const normalizedMessage = message.trim().toLowerCase();
-  const normalizedAssistant = assistantOutput.trim().toLowerCase();
-  if (!normalizedMessage || !normalizedAssistant) return false;
-  if (/\b(next step|next action|blocker|blocked|todo|milestone)\b|下一步|阻塞|待办|里程碑/.test(normalizedAssistant)) {
-    return true;
-  }
-  const workIntent =
-    /继续|实现|修复|分析|排查|部署|测试|重构|优化|\b(fix|implement|debug|deploy|refactor|optimi[sz]e|test)\b/;
-  const progressSignal = /\b(completed|implemented|fixed|updated|shipped)\b|已完成|完成了|已修复|已更新/;
-  return workIntent.test(normalizedMessage) && progressSignal.test(normalizedAssistant);
-}
-
 async function captureIfNeeded(sessionID: string, agentId: string, projectId?: string) {
   const state = sessionState.get(sessionID);
   if (!state?.latestUserMessage || !state.latestAssistantMessage) return;
@@ -278,7 +265,6 @@ async function captureIfNeeded(sessionID: string, agentId: string, projectId?: s
       state.latestUserMessage,
       "--assistant-output",
       state.latestAssistantMessage,
-      ...(looksTaskLike(state.latestUserMessage, state.latestAssistantMessage) ? ["--task-like"] : []),
     ],
     env,
   );

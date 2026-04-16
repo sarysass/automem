@@ -192,10 +192,6 @@ def capture_turn(
             args.extend(["--session-id", session_id])
         if channel:
             args.extend(["--channel", channel])
-        if explicit_long_term:
-            args.append("--explicit-long-term")
-        if task_like:
-            args.append("--task-like")
         result = _run_cli(cfg, args)
         mark_capture_success(cfg, scope_key=scope_key, fingerprint=fingerprint)
         return result
@@ -209,8 +205,6 @@ def capture_turn(
         "session_id": session_id,
         "channel": channel,
         "client_hints": {
-            "explicit_long_term": explicit_long_term,
-            "task_like": task_like,
             "source": "claude-code",
         },
     }
