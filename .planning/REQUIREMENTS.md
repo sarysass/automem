@@ -75,31 +75,31 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HARN-01 | Phase TBD | Pending |
-| HARN-02 | Phase TBD | Pending |
-| HARN-03 | Phase TBD | Pending |
-| E2E-01 | Phase TBD | Pending |
-| E2E-02 | Phase TBD | Pending |
-| E2E-03 | Phase TBD | Pending |
-| AUTH-01 | Phase TBD | Pending |
-| AUTH-02 | Phase TBD | Pending |
-| ORCH-01 | Phase TBD | Pending |
-| ORCH-02 | Phase TBD | Pending |
-| ORCH-03 | Phase TBD | Pending |
-| FAIL-01 | Phase TBD | Pending |
-| FAIL-02 | Phase TBD | Pending |
-| FAIL-03 | Phase TBD | Pending |
-| UNIT-01 | Phase TBD | Pending |
-| UNIT-02 | Phase TBD | Pending |
-| UNIT-03 | Phase TBD | Pending |
-| QUAL-01 | Phase TBD | Pending |
-| QUAL-02 | Phase TBD | Pending |
+| HARN-01 | Phase 10 | Planned |
+| HARN-02 | Phase 10 | Planned |
+| HARN-03 | Phase 10 | Planned |
+| E2E-01 | Phase 11 | Planned |
+| E2E-02 | Phase 11 | Planned |
+| E2E-03 | Phase 11 | Planned |
+| AUTH-01 | Phase 11 | Planned |
+| AUTH-02 | Phase 11 | Planned |
+| ORCH-01 | Phase 12 | Planned |
+| ORCH-02 | Phase 12 | Planned |
+| ORCH-03 | Phase 12 | Planned |
+| FAIL-01 | Phase 12 | Planned |
+| FAIL-02 | Phase 12 | Planned |
+| FAIL-03 | Phase 12 | Planned |
+| UNIT-01 | Phase 11 | Planned |
+| UNIT-02 | Phase 11 | Planned |
+| UNIT-03 | Phase 12 | Planned |
+| QUAL-01 | Phase 13 | Planned |
+| QUAL-02 | Phase 13 | Planned |
 
 **Coverage:**
 - v1 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19 ⚠️
+- Mapped to phases: 19
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-16*
-*Last updated: 2026-04-16 after initial milestone v1.1 definition*
+*Last updated: 2026-04-16 after roadmap creation for milestone v1.1*
