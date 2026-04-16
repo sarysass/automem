@@ -10,7 +10,7 @@ Requirements for the v1.1 testing milestone. These focus on proving existing pro
 ### Harness Foundation
 
 - [x] **HARN-01**: Maintainer can run a shared live-process test harness that boots the API with isolated temp state and deterministic test dependencies.
-- [ ] **HARN-02**: Maintainer can run worker and scheduler tests against the same isolated harness without adding test-only production endpoints.
+- [x] **HARN-02**: Maintainer can run worker and scheduler tests against the same isolated harness without adding test-only production endpoints.
 - [ ] **HARN-03**: Maintainer can classify tests into fast and slow lanes so routine PR validation stays quick while deeper integration coverage remains available.
 
 ### Deep-User Workflows

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Testing Depth & Real-World Regression
 status: executing
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-04-16T16:22:12.570Z"
+stopped_at: Completed 10-02-PLAN.md
+last_updated: "2026-04-16T16:37:27.264Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
-  percent: 33
+  completed_plans: 2
+  percent: 67
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-16)
 ## Current Position
 
 Phase: 10 (test-harness-and-lane-foundation) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-16
 
@@ -60,6 +60,7 @@ Progress: [██████████████░░░░░░] 69%
 - Trend: previous milestone closed cleanly; v1.1 is ready to execute Phase 10
 
 | Phase 10-test-harness-and-lane-foundation P01 | 8m | 2 tasks | 8 files |
+| Phase 10 P02 | 7m | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,8 @@ Decisions are logged in `.planning/PROJECT.md`. Most relevant now:
 - Current milestone: tests lead execution so regressions become observable before refactors
 - [Phase 10-test-harness-and-lane-foundation]: Phase 10 live harness boots backend/main.py in a child process and injects FakeMemory before serving requests.
 - [Phase 10-test-harness-and-lane-foundation]: All polling loops for live harness readiness live in tests/support/waiting.py instead of ad hoc test sleeps.
+- [Phase 10]: Runtime driver helpers execute committed scripts as subprocesses and parse stdout JSON instead of importing script entrypoints into tests.
+- [Phase 10]: Live runtime proof seeds data through /memories but observes queue progression only through /governance/jobs, /metrics, and /audit-log.
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ None active. Planning should keep v1.1 focused on harness depth and regression p
 
 ## Session Continuity
 
-Last session: 2026-04-16T16:22:12.568Z
-Stopped at: Completed 10-01-PLAN.md
+Last session: 2026-04-16T16:37:27.262Z
+Stopped at: Completed 10-02-PLAN.md
 Resume file: None
