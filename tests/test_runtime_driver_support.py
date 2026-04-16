@@ -202,3 +202,63 @@ def test_subprocess_run_uses_utf8_encoding(tmp_path, monkeypatch) -> None:
         env_overrides={"AUTOMEM_WORKER_ONCE": "true"},
     )
     assert captured_kwargs.get("encoding") == "utf-8"
+
+
+# --- Task 4: runtime driver stable defaults and env guards ---
+
+
+def test_scheduler_defaults_are_stable_across_calls(tmp_path, monkeypatch) -> None:
+    runtime_drivers = import_module("tests.support.runtime_drivers")
+    harness = _make_live_backend(tmp_path)
+    seen_envs: list[dict[str, str]] = []
+
+    begin = runtime_drivers.PAYLOAD_SENTINEL_BEGIN
+    end = runtime_drivers.PAYLOAD_SENTINEL_END
+
+    def fake_run(command, **kwargs):
+        seen_envs.append(dict(kwargs["env"]))
+        return subprocess.CompletedProcess(command, 0, stdout=f"{begin}\n{{\"ok\": true}}\n{end}\n", stderr="")
+
+    monkeypatch.setattr(runtime_drivers.subprocess, "run", fake_run)
+
+    first = runtime_drivers.run_scheduler_enqueue(harness)
+    second = runtime_drivers.run_scheduler_enqueue(harness)
+
+    assert first.env_overrides["MEMORY_CONSOLIDATE_LOCK_FILE"] == second.env_overrides["MEMORY_CONSOLIDATE_LOCK_FILE"]
+    assert first.env_overrides["MEMORY_CONSOLIDATE_IDEMPOTENCY_KEY"] == second.env_overrides["MEMORY_CONSOLIDATE_IDEMPOTENCY_KEY"]
+    assert seen_envs[0]["MEMORY_CONSOLIDATE_LOCK_FILE"] == seen_envs[1]["MEMORY_CONSOLIDATE_LOCK_FILE"]
+    assert seen_envs[0]["MEMORY_CONSOLIDATE_IDEMPOTENCY_KEY"] == seen_envs[1]["MEMORY_CONSOLIDATE_IDEMPOTENCY_KEY"]
+
+
+
+def test_scheduler_rejects_contract_key_override_by_default(tmp_path) -> None:
+    runtime_drivers = import_module("tests.support.runtime_drivers")
+    harness = _make_live_backend(tmp_path)
+
+    with pytest.raises(ValueError, match="MEMORY_CONSOLIDATE_MODE"):
+        runtime_drivers.run_scheduler_enqueue(
+            harness,
+            extra_env={"MEMORY_CONSOLIDATE_MODE": "dispatch"},
+        )
+
+
+
+def test_runtime_env_allowlist_excludes_secret_thing(tmp_path, monkeypatch) -> None:
+    runtime_drivers = import_module("tests.support.runtime_drivers")
+    harness = _make_live_backend(tmp_path)
+    captured_env: dict[str, str] = {}
+
+    begin = runtime_drivers.PAYLOAD_SENTINEL_BEGIN
+    end = runtime_drivers.PAYLOAD_SENTINEL_END
+
+    monkeypatch.setenv("SECRET_THING", "1")
+
+    def fake_run(command, **kwargs):
+        captured_env.update(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0, stdout=f"{begin}\n{{\"ok\": true}}\n{end}\n", stderr="")
+
+    monkeypatch.setattr(runtime_drivers.subprocess, "run", fake_run)
+
+    runtime_drivers.run_worker_once(harness)
+
+    assert "SECRET_THING" not in captured_env

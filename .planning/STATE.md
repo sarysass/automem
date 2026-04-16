@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Testing Depth & Real-World Regression
-status: executing
-stopped_at: Phase 10 hardening plan 10-04 drafted from adversarial review; ready for `/gsd-execute-phase 10` scoped to 10-04.
-last_updated: "2026-04-16T17:45:00.386Z"
-last_activity: 2026-04-16 -- Phase 10 execution started
+status: planning
+stopped_at: Phase 10 completed; Phase 11 ready to discuss and plan.
+last_updated: "2026-04-17T00:00:00Z"
+last_activity: 2026-04-17 -- Phase 10 hardening plan 10-04 completed
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_plans: 4
+  percent: 25
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-17)
 
 **Core value:** Turn noisy agent output into trustworthy shared memory and task state that multiple agents can reuse safely.
-**Current focus:** Phase 10 — test-harness-and-lane-foundation
+**Current focus:** Phase 11 planning for deep-user-workflow-and-scope-regression.
 
 ## Current Position
 
-Phase: 10 (test-harness-and-lane-foundation) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 10
-Last activity: 2026-04-16 -- Phase 10 execution started
+Phase: 11 of 13 (Deep User Workflow And Scope Regression)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-04-17 -- Phase 10 hardening plan 10-04 completed
 
-Progress: [████░░░░░░░░░░░░░░░░] 19%
+Progress: [█████░░░░░░░░░░░░░░░] 25%
 
 ## Performance Metrics
 
@@ -57,12 +57,12 @@ Progress: [████░░░░░░░░░░░░░░░░] 19%
 
 **Recent Trend:**
 
-- Last 3 plans: Phase 10 shared harness foundation, Phase 10 runtime entrypoint coverage, Phase 10 fast/slow lane governance
-- Trend: Phase 10 is verified complete and v1.1 is ready to begin Phase 11 planning
+- Last 3 plans: Phase 10 runtime entrypoint coverage, Phase 10 fast/slow lane governance, Phase 10 adversarial harness hardening
+- Trend: Phase 10 is complete and v1.1 is ready to begin Phase 11 planning
 
-| Phase 10-test-harness-and-lane-foundation P01 | 8m | 2 tasks | 8 files |
-| Phase 10 P02 | 7m | 2 tasks | 3 files |
+| Phase 10-test-harness-and-lane-foundation P02 | 7m | 2 tasks | 3 files |
 | Phase 10 P03 | 5m | 2 tasks | 8 files |
+| Phase 10 P04 | 1 session | 5 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -79,14 +79,16 @@ Decisions are logged in `.planning/PROJECT.md`. Most relevant now:
 - [Phase 10]: Live runtime proof seeds data through /memories but observes queue progression only through /governance/jobs, /metrics, and /audit-log.
 - [Phase 10]: Keep the default PR/test loop on uv run pytest -m "not slow" and make the live harness lane explicit by name.
 - [Phase 10]: Sanitize private paths from committed artifacts instead of weakening repository layout enforcement when the fast lane failed.
+- [Phase 10]: Runtime scripts emit sentinel-wrapped final payloads so runtime drivers ignore log noise and pretty-printed JSON safely.
+- [Phase 10]: FakeMemory must stay strict enough to catch shape drift and typoed kwargs, while still honoring the real backend contract such as `search(..., filters=...)`.
 
 ### Pending Todos
 
-- Execute `10-04-PLAN.md`: sentinel payload protocol, FakeMemory faithful text extraction + defensive copies + strict kwargs + injectable clock/score, runtime-driver lock/idempotency stability, env allowlist, `extra_env` contract guard, and two deferred-items entries.
+None yet.
 
 ### Blockers/Concerns
 
-- Phase 11 planning should wait for 10-04 to land, because Phase 11 workflow tests will otherwise be built on FakeMemory shapes and runtime-driver behaviors that this plan changes.
+None active. Phase 11 can now plan on top of the hardened Phase 10 harness without inheriting the earlier FakeMemory/runtime-driver blind spots.
 
 ## Deferred Items
 
@@ -97,5 +99,5 @@ Decisions are logged in `.planning/PROJECT.md`. Most relevant now:
 ## Session Continuity
 
 Last session: 2026-04-17T00:00:00Z
-Stopped at: Phase 10 hardening plan 10-04 drafted from adversarial review; ready for `/gsd-execute-phase 10` scoped to 10-04.
-Resume file: .planning/phases/10-test-harness-and-lane-foundation/10-04-PLAN.md
+Stopped at: Phase 10 completed; next step is Phase 11 discussion/planning.
+Resume file: None

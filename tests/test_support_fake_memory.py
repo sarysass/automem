@@ -104,3 +104,94 @@ def test_extract_text_non_text_parts_ignored() -> None:
     added = memory.add([{"role": "user", "content": parts}])
     record = memory.get(added["id"])
     assert record["memory"] == "a\nb"
+
+
+# --- Task 3: strict FakeMemory contract with production-compatible kwargs ---
+
+
+def test_search_accepts_backend_filters_kwarg() -> None:
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    memory.add(
+        [{"role": "user", "content": "偏好使用中文沟通"}],
+        user_id="user-a",
+        metadata={"domain": "long_term", "project_id": "project-a"},
+    )
+    memory.add(
+        [{"role": "user", "content": "安排明天会议"}],
+        user_id="user-a",
+        metadata={"domain": "task", "project_id": "project-b"},
+    )
+
+    result = memory.search(
+        "沟通",
+        user_id="user-a",
+        filters={"domain": "long_term", "project_id": "project-a"},
+    )
+
+    assert len(result["results"]) == 1
+    assert result["results"][0]["memory"] == "偏好使用中文沟通"
+    assert result["results"][0]["metadata"]["project_id"] == "project-a"
+
+
+def test_get_returns_defensive_copy_for_nested_metadata() -> None:
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    added = memory.add(
+        [{"role": "user", "content": "alpha"}],
+        metadata={"status": "active", "nested": {"count": 1}},
+    )
+    record = memory.get(added["id"])
+    record["metadata"]["status"] = "mutated"
+    record["metadata"]["nested"]["count"] = 2
+
+    reloaded = memory.get(added["id"])
+    assert reloaded["metadata"]["status"] == "active"
+    assert reloaded["metadata"]["nested"]["count"] == 1
+
+
+def test_add_rejects_unexpected_kwargs() -> None:
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    with pytest.raises(TypeError, match="unexpected kwargs"):
+        memory.add("alpha", **{"user-id": "user-a"})
+
+
+def test_injected_clock_controls_created_at() -> None:
+    fake_memory_module = import_module("tests.support.fake_memory")
+    stamps = iter(["2026-02-01T00:00:00+00:00", "2026-02-01T00:00:01+00:00"])
+    memory = fake_memory_module.FakeMemory(clock=lambda: next(stamps))
+
+    first = memory.add("alpha")["results"][0]
+    second = memory.add("beta")["results"][0]
+
+    assert first["created_at"] == "2026-02-01T00:00:00+00:00"
+    assert second["created_at"] == "2026-02-01T00:00:01+00:00"
+
+
+def test_injected_score_fn_controls_search_scores() -> None:
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory(
+        score_fn=lambda query, record: 0.1 if record["memory"] == "alpha" else 0.8
+    )
+
+    memory.add("alpha")
+    memory.add("beta")
+
+    result = memory.search("a")
+    by_memory = {item["memory"]: item["score"] for item in result["results"]}
+    assert by_memory["alpha"] == 0.1
+    assert by_memory["beta"] == 0.8
+
+
+def test_get_and_delete_raise_fake_memory_not_found() -> None:
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    with pytest.raises(fake_memory_module.FakeMemoryNotFound):
+        memory.get("missing")
+    with pytest.raises(fake_memory_module.FakeMemoryNotFound):
+        memory.delete("missing")
