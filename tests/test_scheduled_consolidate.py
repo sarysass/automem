@@ -185,4 +185,10 @@ def test_main_skips_when_lock_exists(
     exit_code = scheduled_module.main()
 
     assert exit_code == 0
-    assert json.loads(capsys.readouterr().out) == {"status": "skipped", "reason": "lock_exists"}
+    out = capsys.readouterr().out
+    # Script now wraps its final payload between sentinel markers.
+    begin = "===AUTOMEM_PAYLOAD_BEGIN==="
+    end = "===AUTOMEM_PAYLOAD_END==="
+    lines = out.splitlines()
+    body = "\n".join(lines[lines.index(begin) + 1 : lines.index(end)])
+    assert json.loads(body) == {"status": "skipped", "reason": "lock_exists"}

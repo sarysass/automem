@@ -109,13 +109,22 @@ def main() -> int:
     once = (os.environ.get("AUTOMEM_WORKER_ONCE") or "true").strip().lower() in {"1", "true", "yes", "on"}
     with single_worker_lock(build_lock_path()) as acquired:
         if not acquired:
+            # Sentinel-wrapped so runtime_drivers can parse payload even on skipped path.
+            # Source of truth for sentinel strings: tests/support/runtime_drivers.py
+            print("===AUTOMEM_PAYLOAD_BEGIN===")
             print(json.dumps({"status": "skipped", "reason": "lock_exists"}, ensure_ascii=False))
+            print("===AUTOMEM_PAYLOAD_END===")
             return 0
         with build_client() as client:
             while True:
                 result = run_once(client, worker_id=build_worker_id())
-                print(json.dumps(result, ensure_ascii=False))
                 if once or result.get("status") == "idle":
+                    # Sentinel-wrapped final payload so runtime_drivers._parse_payload
+                    # can locate it regardless of any log noise.
+                    # Source of truth for sentinel strings: tests/support/runtime_drivers.py
+                    print("===AUTOMEM_PAYLOAD_BEGIN===")
+                    print(json.dumps(result, ensure_ascii=False))
+                    print("===AUTOMEM_PAYLOAD_END===")
                     break
                 time.sleep(poll_seconds)
     return 0

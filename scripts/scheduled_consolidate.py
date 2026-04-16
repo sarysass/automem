@@ -198,11 +198,20 @@ def main() -> int:
     payload = build_payload()
     with single_run_lock(build_lock_path()) as acquired:
         if not acquired:
+            # Sentinel-wrapped so runtime_drivers can parse payload even on skipped path.
+            # Source of truth for sentinel strings: tests/support/runtime_drivers.py
+            print("===AUTOMEM_PAYLOAD_BEGIN===")
             print(json.dumps({"status": "skipped", "reason": "lock_exists"}, ensure_ascii=False))
+            print("===AUTOMEM_PAYLOAD_END===")
             return 0
         with build_client() as client:
             result = run_consolidation(client, payload)
+    # Sentinel-wrapped payload so runtime_drivers._parse_payload can locate it
+    # regardless of log noise emitted before or after this block.
+    # Source of truth for sentinel strings: tests/support/runtime_drivers.py
+    print("===AUTOMEM_PAYLOAD_BEGIN===")
     print(json.dumps(result, ensure_ascii=False))
+    print("===AUTOMEM_PAYLOAD_END===")
     return 0
 
 
