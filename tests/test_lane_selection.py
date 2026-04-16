@@ -47,6 +47,7 @@ def test_phase_10_live_suites_are_marked_slow_and_serial() -> None:
         text = suite_path.read_text(encoding="utf-8")
         assert "pytest.mark.slow" in text, suite_path.name
         assert "pytest.mark.serial" in text, suite_path.name
+        assert "pytest.mark.timeout(" in text, suite_path.name
 
 
 def test_phase_10_validation_documents_fast_and_slow_lane_commands() -> None:

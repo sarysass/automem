@@ -5,7 +5,7 @@ from importlib import import_module
 import pytest
 
 
-pytestmark = [pytest.mark.slow, pytest.mark.serial]
+pytestmark = [pytest.mark.slow, pytest.mark.serial, pytest.mark.timeout(30)]
 
 
 def test_scheduler_driver_returns_enqueued_job_payload(tmp_path) -> None:

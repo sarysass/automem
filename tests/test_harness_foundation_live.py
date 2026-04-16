@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 
-pytestmark = [pytest.mark.slow, pytest.mark.serial]
+pytestmark = [pytest.mark.slow, pytest.mark.serial, pytest.mark.timeout(30)]
 
 
 def test_live_backend_requires_api_key_over_real_http(tmp_path) -> None:

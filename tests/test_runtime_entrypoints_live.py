@@ -9,7 +9,7 @@ import pytest
 from tests.support.waiting import wait_for_condition
 
 
-pytestmark = [pytest.mark.slow, pytest.mark.serial]
+pytestmark = [pytest.mark.slow, pytest.mark.serial, pytest.mark.timeout(30)]
 
 
 def seed_duplicate_long_term_memory(client: httpx.Client, *, text: str, user_id: str) -> None:
