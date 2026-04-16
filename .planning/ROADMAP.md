@@ -99,3 +99,14 @@ Phases execute in numeric order: 10 → 11 → 12 → 13
 | 11. Deep-User Workflow And Scope Regression | 0/TBD | Not started | - |
 | 12. Orchestration And Failure-Recovery Coverage | 0/TBD | Not started | - |
 | 13. Canary And Quality Gates | 0/TBD | Not started | - |
+
+## Backlog
+
+### Phase 999.1: 这个skills是什么意思？ (BACKLOG)
+
+**Goal:** [Captured for future planning]
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
