@@ -34,7 +34,7 @@ automem v1.0 is shipped, and v1.1 now focuses on proving the shipped control pla
 
 **Milestone Goal:** Turn existing capability claims into durable regression protection through realistic workflows, orchestration coverage, failure-path tests, and explicit CI lanes.
 
-- [ ] **Phase 10: Test Harness And Lane Foundation** - Create the isolated live-process harness and baseline lane structure every deeper regression suite depends on.
+- [x] **Phase 10: Test Harness And Lane Foundation** - Create the isolated live-process harness and baseline lane structure every deeper regression suite depends on. (completed 2026-04-16)
 - [ ] **Phase 11: Deep-User Workflow And Scope Regression** - Prove core memory, fact, task, and auth flows through named API-first scenarios plus targeted rule backfill.
 - [ ] **Phase 12: Orchestration And Failure-Recovery Coverage** - Prove queue, worker, scheduler, retry, and degraded-governance behavior across real handoffs and stable failure states.
 - [ ] **Phase 13: Canary And Quality Gates** - Formalize fast/slow governance and milestone-level critical-path checks, including a gated canary lane.
@@ -52,9 +52,9 @@ automem v1.0 is shipped, and v1.1 now focuses on proving the shipped control pla
 **Plans**: 3 plans
 
 Plans:
-- [ ] `10-01-PLAN.md` — Extract shared fake-memory support and build the live backend harness proof.
-- [ ] `10-02-PLAN.md` — Drive the real scheduler and worker scripts against the shared live harness.
-- [ ] `10-03-PLAN.md` — Register fast/slow lanes in pytest, CI, and contributor documentation.
+- [x] `10-01-PLAN.md` — Extract shared fake-memory support and build the live backend harness proof.
+- [x] `10-02-PLAN.md` — Drive the real scheduler and worker scripts against the shared live harness.
+- [x] `10-03-PLAN.md` — Register fast/slow lanes in pytest, CI, and contributor documentation.
 
 ### Phase 11: Deep-User Workflow And Scope Regression
 **Goal**: Maintainers can prove the highest-value API-first user stories and fail-closed scope boundaries through named regression scenarios backed by focused rule tests.
@@ -95,7 +95,7 @@ Phases execute in numeric order: 10 → 11 → 12 → 13
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 01-09 Archived Milestone Work | 15/15 | Complete | 2026-04-16 |
-| 10. Test Harness And Lane Foundation | 2/3 | In Progress|  |
+| 10. Test Harness And Lane Foundation | 3/3 | Complete   | 2026-04-16 |
 | 11. Deep-User Workflow And Scope Regression | 0/TBD | Not started | - |
 | 12. Orchestration And Failure-Recovery Coverage | 0/TBD | Not started | - |
 | 13. Canary And Quality Gates | 0/TBD | Not started | - |
