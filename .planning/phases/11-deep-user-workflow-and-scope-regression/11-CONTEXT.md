@@ -19,19 +19,21 @@ This phase proves the shipped backend through named API-first regression stories
 - **D-03:** These stories should stay API-first and maintainer-oriented. Prefer deterministic FastAPI test flows first, then reuse the Phase 10 live harness only when a scenario genuinely needs real HTTP or runtime-process behavior.
 
 ### Authorization and scope matrix
-- **D-04:** Scope regression should be expressed as a fail-closed access matrix that covers single-project keys, multi-project keys, and admin access paths across memory, task, search, close, archive, and forget actions.
-- **D-05:** Multi-project scenarios should keep the current explicit-project contract: tests must prove that ambiguous scope requests fail until `project_id` is supplied, while single-project keys default safely to their bound project.
-- **D-06:** Hidden-resource behavior should remain endpoint-faithful. Cross-project reads and lifecycle actions should continue to assert the current protected outcomes such as `404` for inaccessible resources and `400`/`403` for explicit scope violations.
+- **D-04:** Phase 11 should test fail-closed scope behavior against the current shipped system, but planning should treat the approved target model as two primary scopes only: `user_global` and `project`. `task` remains an organization dimension, not a third access boundary.
+- **D-05:** Retrieval behavior should evolve toward project queries inheriting `user_global` by default, with an explicit strict-project parameter available when callers want project-only results.
+- **D-06:** Non-admin writes should not silently guess scope except in a single-project context. High-ambiguity “current state” inputs should require stronger evidence or explicit scope.
+- **D-07:** `agent_id` should continue as attribution and audit context, not as the primary isolation layer. Scope enforcement should center on user identity plus explicit memory scope.
+- **D-08:** Hidden-resource behavior should remain endpoint-faithful. Cross-project reads and lifecycle actions should continue to assert protected outcomes such as `404` for inaccessible resources and `400`/`403` for explicit scope violations.
 
 ### Fact and task lifecycle evidence
-- **D-07:** Fact lifecycle coverage should validate both the write-side response payload and the retrieval-side state model. Supersede scenarios should assert `fact_action`, `fact_status`, history visibility, and the active-versus-superseded search behavior together.
-- **D-08:** Conflict-review scenarios should prove that a new conflicting fact is retained for review without displacing the active fact, and that history-aware retrieval exposes the review record correctly.
-- **D-09:** Task lifecycle scenarios should validate materialization, retrieval, close/archive transitions, and cleanup/normalization side effects as one coherent workflow instead of isolated helper-only assertions.
+- **D-09:** Fact lifecycle coverage should validate both the write-side response payload and the retrieval-side state model. Supersede scenarios should assert `fact_action`, `fact_status`, history visibility, and the active-versus-superseded search behavior together.
+- **D-10:** Conflict-review scenarios should prove that a new conflicting fact is retained for review without displacing the active fact, and that history-aware retrieval exposes the review record correctly.
+- **D-11:** Task lifecycle scenarios should validate materialization, retrieval, close/archive transitions, and cleanup/normalization side effects as one coherent workflow instead of isolated helper-only assertions.
 
 ### Unit backfill strategy
-- **D-10:** Focused unit backfill should target stable rule and helper seams rather than re-testing whole API stories. The primary targets are task classification and suppression rules, cleanup heuristics, project-scope enforcement helpers, and fact lifecycle helper functions.
-- **D-11:** Unit coverage should localize regressions in `backend/governance/task_policy.py` and the project/fact helper functions in `backend/main.py`, especially `normalize_project_ids`, project filter/metadata merges, project enforcement, and active-fact transition helpers.
-- **D-12:** Queue, worker, and scheduler job-state helpers should only be covered here when they support Phase 11 scope-local assertions; deeper orchestration and failure-path behavior remains reserved for Phase 12.
+- **D-12:** Focused unit backfill should target stable rule and helper seams rather than re-testing whole API stories. The primary targets are task classification and suppression rules, cleanup heuristics, current project-scope enforcement helpers, fact lifecycle helper functions, and future scope-migration decision logic.
+- **D-13:** Unit coverage should localize regressions in `backend/governance/task_policy.py` and the scope/fact helper functions in `backend/main.py`, especially the helpers that currently normalize `project_id` and the future helpers that classify legacy records into `user_global`, `project`, or `migration_review`.
+- **D-14:** Queue, worker, and scheduler job-state helpers should only be covered here when they support Phase 11 scope-local assertions; deeper orchestration and failure-path behavior remains reserved for Phase 12.
 
 ### the agent's Discretion
 - Exact scenario names, fixture helper names, and file splits across the new test modules
@@ -51,6 +53,9 @@ This phase proves the shipped backend through named API-first regression stories
 
 ### Acceptance boundaries
 - `.planning/REQUIREMENTS.md` — `E2E-01`, `E2E-02`, `E2E-03`, `AUTH-01`, `AUTH-02`, `UNIT-01`, and `UNIT-02`, plus the v1.1 out-of-scope section
+
+### Approved scope direction
+- `.planning/phases/11-deep-user-workflow-and-scope-regression/11-SCOPE-MODEL.md` — approved target scope model, retrieval inheritance rules, migration direction, and ambiguity handling to use during planning
 
 ### Inherited test foundation
 - `.planning/phases/10-test-harness-and-lane-foundation/10-VALIDATION.md` — inherited validation contract for the shared harness and lane structure this phase builds on
@@ -73,6 +78,7 @@ This phase proves the shipped backend through named API-first regression stories
 - Fact lifecycle is modeled as active, superseded, and conflict-review records, with search behavior changing based on `include_history`
 - Task governance distinguishes work, meta, system, and snapshot tasks in `backend/governance/task_policy.py`, and normalization/cleanup flows are exposed through API endpoints rather than hidden helpers
 - Current regression coverage already mixes focused unit tests and API tests; Phase 11 should deepen that pattern rather than replace it
+- The shipped code still uses `project_id` as the primary scope signal today; planning for Phase 11 should treat that as the current implementation shape to verify, not the final target semantics
 
 ### Integration Points
 - Memory and fact stories connect through `/memories`, `/memories/{memory_id}`, and `/search`
@@ -85,7 +91,10 @@ This phase proves the shipped backend through named API-first regression stories
 <specifics>
 ## Specific Ideas
 
-- Gathered in auto-default mode from roadmap requirements and current code patterns because no interactive discuss menu was available in this session
+- Scope direction is now guided by the approved Phase 11 scope decision rather than the shipped `project_id`-only semantics
+- Retrieval quality should prioritize “should have found it but didn't” regressions first, ranking failures second, and explanation failures third
+- Core-query explanations should be short natural-language explanations grounded in the real ranking reasons, not fabricated post-hoc justifications
+- Mixed-scope retrieval should choose a main answer from query intent and preserve the other scope as supporting context
 - Keep the stories maintainer-readable: scenario names should describe the workflow or boundary being protected, not the endpoint under test
 - Prefer standard backend regression approaches already used in the repo; no additional product-style UX requirements were introduced here
 

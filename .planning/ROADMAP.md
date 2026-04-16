@@ -66,7 +66,11 @@ Plans:
   2. Maintainer can verify temporal fact supersede and conflict-review behavior through real API scenarios instead of helper-only assertions.
   3. Maintainer can verify task lifecycle flows, including materialization, follow-up retrieval, and cleanup side effects, through realistic regression stories.
   4. Maintainer can prove fail-closed single-project, multi-project, and admin boundaries across memory, task, search, close, archive, and forget flows while focused unit tests localize regressions in classification, scope, fact lifecycle, and shared state helpers.
-**Plans**: TBD
+**Plans**:
+- [ ] `11-01-PLAN.md` — Named deep-user memory and fact workflows, including intent recall, supersede, conflict-review, and truthful explanation assertions.
+- [ ] `11-02-PLAN.md` — Multi-hop task handoff, cleanup, and task-governance rule regression stories.
+- [ ] `11-03-PLAN.md` — Fail-closed authorization and scope matrix across memory and task surfaces, plus focused helper localization.
+- [ ] `11-04-PLAN.md` — Scope-model preparation helpers for legacy classification and mixed-retrieval role decisions without a full API cutover.
 
 ### Phase 12: Orchestration And Failure-Recovery Coverage
 **Goal**: Maintainers can prove that background governance behaves correctly from enqueue through completion or safe failure under real worker and scheduler orchestration.
