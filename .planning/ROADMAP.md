@@ -2,7 +2,7 @@
 
 ## Overview
 
-automem is evolving from foundational memory hardening into a shared memory control plane for multi-agent systems. The next milestone focuses on four product upgrades distilled from prior research: shared identity and access boundaries, hybrid retrieval with explainability, temporal fact lifecycle with conflict governance, and a clearer runtime split between API, worker, and MCP distribution surfaces.
+automem is evolving from foundational memory hardening into a shared memory control plane for multi-agent systems. The core v1.0 product phases are complete, and the roadmap now adds milestone-close hygiene phases to backfill missing verification evidence and milestone-wide validation coverage before archival.
 
 ## Phases
 
@@ -12,7 +12,9 @@ automem is evolving from foundational memory hardening into a shared memory cont
 - [x] **Phase 04: Shared Identity And Access Model** - Extend visibility and access from raw user scope to project-aware shared collaboration. (completed 2026-04-15)
 - [x] **Phase 05: Retrieval And Explainability** - Upgrade recall to hybrid retrieval and make result provenance visible. (completed 2026-04-15)
 - [x] **Phase 06: Temporal Facts And Conflict Governance** - Model durable memory as evolving facts with lifecycle and conflict states. (completed 2026-04-15)
-- [ ] **Phase 07: Runtime Architecture Upgrade** - Split hot-path admission from background governance and clarify API/worker/MCP roles.
+- [x] **Phase 07: Runtime Architecture Upgrade** - Split hot-path admission from background governance and clarify API/worker/MCP roles. (completed 2026-04-16)
+- [ ] **Phase 08: Foundational Verification Closure** - Backfill missing verification artifacts for foundational auth/governance/consolidation phases and restore milestone requirement traceability.
+- [ ] **Phase 09: Milestone Validation Baseline** - Backfill milestone-wide validation coverage so audit and close-out evidence is complete instead of ad hoc.
 
 ## Phase Details
 
@@ -102,10 +104,32 @@ Plans:
   1. admission / route 保持轻量，重治理逻辑从同步链路中抽离。
   2. background worker 具备清晰的任务边界、幂等约束和失败恢复策略。
   3. 对外运行形态可被明确描述为 API + governance worker + MCP/distribution control plane。
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 07-01: Split runtime responsibilities between hot-path API, background governance worker, and MCP adapters
+- [x] 07-01: Split runtime responsibilities between hot-path API, background governance worker, and MCP adapters
+
+### Phase 08: Foundational Verification Closure
+**Goal:** 为 Phase 01-03 补齐 `VERIFICATION.md` 和要求级证据链，消除 milestone audit 中的 orphaned requirements。
+**Depends on:** Phase 07
+**Requirements**: [AUTH-01, AUTH-02, GOV-01, CONS-01, CONS-02]
+**Gap Closure:** Closes orphaned requirement evidence from `v1.0-MILESTONE-AUDIT.md`.
+**Success Criteria** (what must be TRUE):
+  1. Phase 01-03 都有显式 `VERIFICATION.md`，且能给出自动化证据与 must-haves。
+  2. `AUTH-01`、`AUTH-02`、`GOV-01`、`CONS-01`、`CONS-02` 不再在 milestone audit 中被标记为 orphaned。
+  3. REQUIREMENTS 与 phase verification 的 traceability 能重新对齐。
+**Plans:** 0 plans
+
+### Phase 09: Milestone Validation Baseline
+**Goal:** 为当前 milestone 建立完整 validation / Nyquist 覆盖，消除所有 phase 缺失 `*-VALIDATION.md` 的验证债。
+**Depends on:** Phase 08
+**Requirements**: [AUTH-01, AUTH-02, GOV-01, CONS-01, CONS-02, IAM-01, IAM-02, RET-01, RET-02, FACT-01, FACT-02, OPS-01, OPS-02]
+**Gap Closure:** Closes missing validation coverage from `v1.0-MILESTONE-AUDIT.md`.
+**Success Criteria** (what must be TRUE):
+  1. Phase 01-07 都有 `*-VALIDATION.md` 或显式豁免记录。
+  2. milestone audit 不再报告全 milestone 的 Nyquist / validation 缺失。
+  3. 后续 milestone 可以复用同一套 validation 关闭流程，而不是继续手工补洞。
+**Plans:** 0 plans
 
 ## Progress
 
@@ -117,4 +141,6 @@ Plans:
 | 4. Shared Identity And Access Model | 1/1 | Complete | 2026-04-15 |
 | 5. Retrieval And Explainability | 1/1 | Complete | 2026-04-15 |
 | 6. Temporal Facts And Conflict Governance | 1/1 | Complete | 2026-04-15 |
-| 7. Runtime Architecture Upgrade | 0/1 | In progress | - |
+| 7. Runtime Architecture Upgrade | 1/1 | Complete | 2026-04-16 |
+| 8. Foundational Verification Closure | 0/0 | Needs planning | - |
+| 9. Milestone Validation Baseline | 0/0 | Needs planning | - |

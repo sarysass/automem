@@ -1,41 +1,68 @@
 # Requirements
 
-## AUTH-01 Secure Defaults
-- 未显式配置认证时，服务不得以匿名管理员模式启动或放行业务请求。
+**Coverage:** 8/13 satisfied, 5 pending gap closure
 
-## AUTH-02 Tenant Binding
-- 非管理员 API key 必须绑定 `user_id`，避免不同用户数据混写到共享身份。
+## Requirement Checklist
 
-## GOV-01 Backend-Owned Governance
-- 自动 capture 的长期记忆 / task 判断以 backend 为唯一决策点。
-- adapter 只保留本地轻量去噪、去重和 transport-level 抑制。
+- [ ] `AUTH-01` Secure Defaults
+  服务未显式配置认证时，不得以匿名管理员模式启动或放行业务请求。
 
-## CONS-01 Fresh Cache Before Maintenance
-- `tasks/normalize` 和 `consolidate` 必须先基于最新后端状态刷新 `memory_cache`。
+- [ ] `AUTH-02` Tenant Binding
+  非管理员 API key 必须绑定 `user_id`，避免不同用户数据混写到共享身份。
 
-## CONS-02 Safe Canonical Rewrite
-- `consolidate` 的 canonical rewrite 必须先写入新记录，再删除旧记录，避免失败时数据丢失。
+- [ ] `GOV-01` Backend-Owned Governance
+  自动 capture 的长期记忆 / task 判断以 backend 为唯一决策点，adapter 只保留轻量抑制。
 
-## IAM-01 Shared Visibility Model
-- memory 与 task 的身份模型必须支持超越 `user_id` 的共享协作边界，至少可表达 `project` 级 scope，并为后续 `team/org` 扩展留出结构。
+- [ ] `CONS-01` Fresh Cache Before Maintenance
+  `tasks/normalize` 和 `consolidate` 必须先基于最新后端状态刷新 `memory_cache`。
 
-## IAM-02 Consistent Access Enforcement
-- memory 与 task 的读写权限必须使用同一套 identity / visibility 规则，避免“memory 能看见但 task 看不见”或相反。
+- [ ] `CONS-02` Safe Canonical Rewrite
+  `consolidate` 的 canonical rewrite 必须先写入新记录，再删除旧记录，避免失败时数据丢失。
 
-## RET-01 Hybrid Retrieval
-- 检索必须组合 semantic recall、lexical/FTS 命中与 metadata filters，而不是仅依赖单一路径。
+- [x] `IAM-01` Shared Visibility Model
+  memory 与 task 的身份模型必须支持超越 `user_id` 的共享协作边界，至少可表达 `project` 级 scope，并为后续 `team/org` 扩展留出结构。
 
-## RET-02 Explainable Recall
-- 每条召回结果都必须带有结构化解释信息，至少包含命中方式、来源和当前生命周期状态。
+- [x] `IAM-02` Consistent Access Enforcement
+  memory 与 task 的读写权限必须使用同一套 identity / visibility 规则，避免“memory 能看见但 task 看不见”或相反。
 
-## FACT-01 Temporal Fact Lifecycle
-- 长期记忆必须能表达事实的生效、失效、替代和历史版本关系，而不是只追加新文本。
+- [x] `RET-01` Hybrid Retrieval
+  检索必须组合 semantic recall、lexical/FTS 命中与 metadata filters，而不是仅依赖单一路径。
 
-## FACT-02 Conflict Governance
-- 对同一事实位点的矛盾信息必须被检测、标记并进入显式治理流程，而不是静默共存。
+- [x] `RET-02` Explainable Recall
+  每条召回结果都必须带有结构化解释信息，至少包含命中方式、来源和当前生命周期状态。
 
-## OPS-01 Split Hot And Background Paths
-- admission / route 必须保持轻量；canonicalize、merge、conflict resolution、fact closure 等重治理逻辑应在后台 worker 中执行。
+- [x] `FACT-01` Temporal Fact Lifecycle
+  长期记忆必须能表达事实的生效、失效、替代和历史版本关系，而不是只追加新文本。
 
-## OPS-02 API Worker MCP Control Plane
-- 系统运行形态需要清晰拆分为 API、governance worker 与 MCP/distribution 接入面，便于扩展与运维。
+- [x] `FACT-02` Conflict Governance
+  对同一事实位点的矛盾信息必须被检测、标记并进入显式治理流程，而不是静默共存。
+
+- [x] `OPS-01` Split Hot And Background Paths
+  admission / route 必须保持轻量；canonicalize、merge、conflict resolution、fact closure 等重治理逻辑应在后台 worker 中执行。
+
+- [x] `OPS-02` API Worker MCP Control Plane
+  系统运行形态需要清晰拆分为 API、governance worker 与 MCP/distribution 接入面，便于扩展与运维。
+
+## Traceability
+
+| REQ-ID | Description | Phase | Priority | Status |
+|-------|-------------|-------|----------|--------|
+| AUTH-01 | Secure defaults | 08 | must | Pending |
+| AUTH-02 | Tenant binding | 08 | must | Pending |
+| GOV-01 | Backend-owned governance | 08 | must | Pending |
+| CONS-01 | Fresh cache before maintenance | 08 | must | Pending |
+| CONS-02 | Safe canonical rewrite | 08 | must | Pending |
+| IAM-01 | Shared visibility model | 04 | must | Satisfied |
+| IAM-02 | Consistent access enforcement | 04 | must | Satisfied |
+| RET-01 | Hybrid retrieval | 05 | must | Satisfied |
+| RET-02 | Explainable recall | 05 | must | Satisfied |
+| FACT-01 | Temporal fact lifecycle | 06 | must | Satisfied |
+| FACT-02 | Conflict governance | 06 | must | Satisfied |
+| OPS-01 | Split hot and background paths | 07 | must | Satisfied |
+| OPS-02 | API worker MCP control plane | 07 | must | Satisfied |
+
+## Audit Notes
+
+- `v1.0-MILESTONE-AUDIT.md` 将 `AUTH-01`、`AUTH-02`、`GOV-01`、`CONS-01`、`CONS-02` 标记为 `orphaned`，原因不是实现缺失，而是 Phase 01-03 缺少 `VERIFICATION.md`。
+- 因此这些 requirements 已被重置为 `Pending`，并统一重新分配到 Phase `08` 进行 gap closure。
+- Milestone 级 `*-VALIDATION.md` 缺失覆盖由 Phase `09` 关闭，但不单独新增 requirement ID。
