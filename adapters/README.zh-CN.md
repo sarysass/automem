@@ -18,6 +18,13 @@
 - 真实 `MEMORY_URL`、`MEMORY_API_KEY`、`MEMORY_USER_ID` 等值只在本地配置
 - 若需要自定义命名、工具集合或触发策略，请在复制后的本地副本里调整
 
+运行时边界上，请保持：
+
+- adapter 负责 recall / capture / tool exposure
+- adapter 只调用后端 hot-path 接口
+- 不在 adapter 本地继续长出 consolidation、cleanup 或治理分支
+- 后台治理统一交给 API + worker 链路处理
+
 统一安装脚本见：
 
 - `scripts/install_adapter.py`

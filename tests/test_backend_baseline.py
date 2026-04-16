@@ -29,6 +29,57 @@ def test_archive_task_returns_404_for_unknown_task(client, auth_headers):
     assert response.status_code == 404
 
 
+def test_missing_api_key_requires_header(client):
+    response = client.get("/healthz")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "X-API-Key header is required"
+
+
+def test_invalid_api_key_is_rejected(client):
+    response = client.get("/healthz", headers={"X-API-Key": "invalid-token"})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid API key"
+
+
+def test_agent_keys_reject_non_admin_without_user_binding(client, auth_headers):
+    response = client.post(
+        "/agent-keys",
+        headers=auth_headers,
+        json={
+            "agent_id": "agent-missing-user",
+            "label": "agent missing user",
+            "scopes": ["search"],
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Non-admin API keys require user_id"
+
+
+def test_unbound_non_admin_api_key_is_rejected_at_verification(client, backend_module):
+    with sqlite3.connect(backend_module.TASK_DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO api_keys (key_id, token_hash, label, agent_id, user_id, project_ids_json, scopes_json, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            """,
+            (
+                "key_unbound_agent",
+                backend_module.hash_token("unbound-token"),
+                "unbound agent",
+                "agent-unbound",
+                None,
+                "[]",
+                '["search"]',
+                backend_module.utcnow_iso(),
+            ),
+        )
+        conn.commit()
+
+    response = client.get("/healthz", headers={"X-API-Key": "unbound-token"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Non-admin API keys must be bound to a user_id"
+
+
 def test_consolidate_respects_requested_user_scope(client, auth_headers):
     add_long_term_memory(client, auth_headers, text="Example Corp is durable", user_id="user-a")
     add_long_term_memory(client, auth_headers, text="Example Corp is durable", user_id="user-a")
@@ -1823,6 +1874,83 @@ def test_metrics_expose_task_kind_and_memory_domain_breakdown(client, auth_heade
     assert payload["tasks"]["active_non_work"] >= 1
     assert payload["memory_cache"]["by_domain"]["long_term"] >= 1
     assert payload["memory_cache"]["by_domain"]["task"] >= 1
+
+
+def test_runtime_topology_exposes_api_worker_and_mcp_contract(client, auth_headers):
+    response = client.get("/runtime-topology", headers=auth_headers)
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload["runtime"]["api"]["background_submission_endpoint"] == "/governance/jobs"
+    assert "/governance/jobs/run-next" in payload["runtime"]["worker"]["run_next_endpoint"]
+    assert "memory_route" in payload["runtime"]["mcp_control_plane"]["allowed_hot_path_tools"]
+
+
+def test_governance_job_queue_executes_consolidation_and_updates_metrics(client, auth_headers):
+    add_long_term_memory(client, auth_headers, text="Example Corp is durable", user_id="user-a")
+    add_long_term_memory(client, auth_headers, text="Example Corp is durable", user_id="user-a")
+
+    enqueued = client.post(
+        "/governance/jobs",
+        headers=auth_headers,
+        json={
+            "job_type": "consolidate",
+            "payload": {"dry_run": False, "user_id": "user-a"},
+            "user_id": "user-a",
+            "idempotency_key": "consolidate:user-a:test",
+        },
+    )
+    assert enqueued.status_code == 200, enqueued.text
+    queued_payload = enqueued.json()
+    assert queued_payload["status"] == "pending"
+
+    processed = client.post(
+        "/governance/jobs/run-next",
+        headers=auth_headers,
+        json={"worker_id": "worker-a"},
+    )
+    assert processed.status_code == 200, processed.text
+    processed_payload = processed.json()
+    assert processed_payload["status"] == "processed"
+    assert processed_payload["job"]["status"] == "completed"
+    assert processed_payload["job"]["result"]["runtime_path"] == "governance_worker"
+    assert processed_payload["job"]["result"]["duplicate_long_term_count"] == 1
+
+    fetched = client.get(f"/governance/jobs/{queued_payload['job_id']}", headers=auth_headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["status"] == "completed"
+
+    metrics = client.get("/metrics", headers=auth_headers)
+    assert metrics.status_code == 200, metrics.text
+    job_metrics = metrics.json()["metrics"]["governance_jobs"]
+    assert job_metrics["completed"] >= 1
+    assert job_metrics["by_type"]["consolidate"] >= 1
+
+
+def test_governance_job_enqueue_is_idempotent(client, auth_headers):
+    first = client.post(
+        "/governance/jobs",
+        headers=auth_headers,
+        json={
+            "job_type": "consolidate",
+            "payload": {"dry_run": True},
+            "idempotency_key": "same-job",
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.post(
+        "/governance/jobs",
+        headers=auth_headers,
+        json={
+            "job_type": "consolidate",
+            "payload": {"dry_run": True},
+            "idempotency_key": "same-job",
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["job_id"] == first.json()["job_id"]
+    assert second.json()["deduplicated"] is True
 
 
 def test_infer_true_with_metadata_preserves_backend_infer_flag(client, auth_headers, backend_module):

@@ -21,6 +21,12 @@
 
 服务端负责统一存储、检索、任务治理和管理接口。客户端 adapter 负责把不同 Agent 的上下文、工具、hooks 或 MCP 能力接到同一套核心 API / CLI 上。
 
+从运行时职责上看，当前架构已经明确拆成三块：
+
+1. API hot path：同步处理 route / store / search / task resolve
+2. governance worker：异步执行 consolidation 等重治理任务
+3. adapter / MCP：作为控制面与分发面，不再本地持有治理分支
+
 ## 仓库包含什么
 
 本仓库现在包含：
@@ -53,6 +59,12 @@
 - 长期记忆 / 任务记忆数据结构
 - 任务注册与 task summary 写入方式
 
+进一步约定为：
+
+- adapter 只调用 hot-path 接口，不直接实现本地 consolidation
+- 后台治理通过 `/governance/jobs` 提交，由 worker 执行 `/governance/jobs/run-next`
+- 如需查看当前分工，可读 `/runtime-topology`
+
 推荐优先使用以下环境变量：
 
 - `MEMORY_URL`
@@ -69,6 +81,13 @@
 - `MEMORY_*` 用于连接后端服务与声明身份
 - `AUTOMEM_*` 用于帮助 adapter 定位本地仓库或 CLI
 
+如果要部署后台治理 worker，还会用到：
+
+- `AUTOMEM_WORKER_ID`
+- `AUTOMEM_WORKER_POLL_SECONDS`
+- `AUTOMEM_WORKER_ONCE`
+- `MEMORY_CONSOLIDATE_MODE`
+
 ## 各 Adapter 推荐形态
 
 ### Codex
@@ -76,24 +95,28 @@
 - 形态：本地 MCP server
 - 仓库模板：`adapters/codex/`
 - 部署方式：复制到 `~/.codex/...` 或任意本地目录后注册
+- 角色：控制面；暴露热路径工具，不承担后台治理执行
 
 ### OpenClaw
 
 - 形态：memory plugin
 - 仓库模板：`adapters/openclaw/`
 - 部署方式：复制到 `~/.openclaw/extensions/...` 并在本地配置中启用
+- 角色：运行时 recall / capture 接入，不承担 cleanup worker
 
 ### OpenCode
 
 - 形态：plugin + CLI
 - 仓库模板：`adapters/opencode/`
 - 部署方式：复制到 `.opencode/` 或 `~/.config/opencode/plugins/...`
+- 角色：运行时接入与显式工具调用，不承担后台治理执行
 
 ### Claude Code
 
 - 形态：plugin + hooks
 - 仓库模板：`adapters/claude-code/`
 - 部署方式：复制到 `~/.claude/plugins/...` 或通过 `--plugin-dir` 加载
+- 角色：hooks 驱动的 recall / capture，不承担 consolidation 逻辑
 
 ## 发布与维护原则
 

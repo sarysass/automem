@@ -59,6 +59,21 @@ def test_build_payload_supports_scoped_env(monkeypatch: pytest.MonkeyPatch, sche
     assert payload["project_id"] == "project-alpha"
 
 
+def test_build_job_request_derives_bucketed_idempotency_key(monkeypatch: pytest.MonkeyPatch, scheduled_module):
+    monkeypatch.setattr(scheduled_module.time, "time", lambda: 7200.0)
+    job = scheduled_module.build_job_request(
+        {
+            "dry_run": False,
+            "user_id": "user-a",
+            "project_id": "project-alpha",
+        }
+    )
+
+    assert job["job_type"] == "consolidate"
+    assert job["idempotency_key"] == "consolidate:user-a:project-alpha:live:bucket:2"
+    assert job["payload"]["project_id"] == "project-alpha"
+
+
 def test_run_consolidation_rejects_non_200(scheduled_module):
     class FakeResponse:
         status_code = 500
@@ -69,8 +84,8 @@ def test_run_consolidation_rejects_non_200(scheduled_module):
 
     class FakeClient:
         def post(self, path: str, json: dict[str, object]):
-            assert path == "/consolidate"
-            assert json["dry_run"] is False
+            assert path == "/governance/jobs"
+            assert json["payload"]["dry_run"] is False
             return FakeResponse()
 
     with pytest.raises(RuntimeError, match="500"):
@@ -90,13 +105,13 @@ def test_run_consolidation_retries_before_success(
 
         def json(self):
             return {
-                "dry_run": False,
-                "duplicate_long_term_count": 0,
-                "canonicalized_long_term_count": 0,
-                "deleted_noise_count": 0,
-                "archived_tasks_count": 0,
-                "normalized_tasks_count": 0,
-                "task_reclassified_count": 0,
+                "job_id": "govjob_1",
+                "job_type": "consolidate",
+                "status": "pending",
+                "payload": {"dry_run": False},
+                "result": {},
+                "attempts": 0,
+                "max_attempts": 3,
             }
 
     class FakeClient:
@@ -111,10 +126,12 @@ def test_run_consolidation_retries_before_success(
     result = scheduled_module.run_consolidation(client, {"dry_run": False})
 
     assert client.calls == 2
-    assert result["dry_run"] is False
+    assert result["job_type"] == "consolidate"
 
 
-def test_run_consolidation_requires_expected_fields(scheduled_module):
+def test_run_consolidation_requires_expected_fields(monkeypatch: pytest.MonkeyPatch, scheduled_module):
+    monkeypatch.setenv("MEMORY_CONSOLIDATE_MODE", "inline")
+
     class FakeResponse:
         status_code = 200
 
@@ -123,9 +140,26 @@ def test_run_consolidation_requires_expected_fields(scheduled_module):
 
     class FakeClient:
         def post(self, path: str, json: dict[str, object]):
+            assert path == "/consolidate"
             return FakeResponse()
 
     with pytest.raises(RuntimeError, match="missing expected keys"):
+        scheduled_module.run_consolidation(FakeClient(), {"dry_run": False})
+
+
+def test_run_consolidation_enqueue_requires_expected_fields(scheduled_module):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"job_id": "govjob_1", "status": "pending"}
+
+    class FakeClient:
+        def post(self, path: str, json: dict[str, object]):
+            assert path == "/governance/jobs"
+            return FakeResponse()
+
+    with pytest.raises(RuntimeError, match="governance job response missing expected keys"):
         scheduled_module.run_consolidation(FakeClient(), {"dry_run": False})
 
 

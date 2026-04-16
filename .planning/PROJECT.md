@@ -19,11 +19,14 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 - [x] Foundational auth hardening, task normalization, and scheduled consolidation safety
 - [x] Shared identity and access model beyond raw `user_id` (validated in Phase 04: project-scoped enforcement across memory, task, and CLI key creation)
 - [x] Retrieval and explainability upgrades for memory/task recall (validated in Phase 05: hybrid retrieval now returns explainable match paths, metadata filters, and task alias recall)
+- [x] Temporal fact lifecycle and conflict governance (validated in Phase 06: long-term memory now carries lifecycle metadata, supersede chains, conflict-review state, and history-aware retrieval)
+- [x] Runtime split between hot-path admission and background governance workers (validated in Phase 07: governance jobs, worker entrypoint, runtime topology, and API/worker/MCP role separation are live)
+- [x] Foundational verification evidence chain for auth, governance, and consolidation (validated in Phase 08: Phase 01-03 now each have explicit `VERIFICATION.md`, and milestone traceability points to those artifacts)
+- [x] Milestone-wide validation baseline and Nyquist coverage for Phase 01-07 (validated in Phase 09: every completed product phase now has a compliant `*-VALIDATION.md` artifact and the milestone audit no longer reports validation gaps)
 
 ### Active
 
-- [ ] Temporal fact lifecycle and conflict governance
-- [ ] Runtime split between hot-path admission and background governance workers
+None — v1.0 validated scope is complete and ready for milestone close-out.
 
 ### Out of Scope
 
@@ -34,15 +37,20 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 ## Context
 
 - The current codebase already supports multiple adapters and a shared backend contract.
-- The project recently moved from foundational hardening into optimization phases `04-07`.
+- The project has completed product phases `04-07` and the milestone-close phases `08-09`.
 - Codebase analysis has already identified the major concerns: identity boundaries, governance consistency, retrieval quality, fact lifecycle, and runtime architecture.
 - Existing tests already cover memory governance, task normalization, scheduled consolidation, and the first wave of project-scoped identity behavior.
-- Recent open-source research has been distilled into eight product upgrades that now map directly to phases `04-07`: permissions beyond `user_id`, deterministic governance surfaces, hybrid retrieval, explainable recall, temporal facts, conflict detection, hot/background runtime split, and API + worker + MCP control-plane shape.
+- Recent open-source research has been distilled into eight product upgrades that map to phases `04-07`, followed by gap-closure phases that restored verification and validation hygiene before milestone archival.
 
 ## Current State
 
 - Phase `04` is complete: project-scoped identity enforcement now covers memory/task writes, reads, and memory deletion, and the CLI can mint bound keys with `user_id` plus repeated `project_id` scopes.
 - Phase `05` is complete: search now exposes explainable hybrid retrieval signals (`semantic` / `lexical` / `metadata`), carries lifecycle status in results, and can recover task memories via task title and alias metadata.
+- Phase `06` is complete: long-term memory now behaves like versioned facts with lifecycle metadata, supersede chains, conflict-review states, and history-aware retrieval.
+- Phase `07` is complete: heavy governance work now runs through background jobs and a governance worker, while runtime topology and docs expose the API/worker/MCP split.
+- Phase `08` is complete: foundational auth/governance/consolidation phases now have explicit verification artifacts, `REQUIREMENTS.md` is back to `13/13 satisfied`, and orphaned requirement debt is closed.
+- Phase `09` is complete: Phase `01-07` now all have compliant `*-VALIDATION.md` artifacts, and `v1.0-MILESTONE-AUDIT.md` now passes.
+- The project is ready for milestone close-out rather than additional v1.0 scope expansion.
 
 ## Constraints
 
@@ -61,4 +69,4 @@ Turn noisy agent output into trustworthy shared memory and task state that multi
 | Tests should lead phase execution | Protects a sensitive backend where regressions are hard to notice manually | ✓ Good |
 
 ---
-*Last updated: 2026-04-16 after Phase 05 execution*
+*Last updated: 2026-04-16 after Phase 09 execution*

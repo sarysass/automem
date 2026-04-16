@@ -22,6 +22,15 @@ EXPECTED_KEYS = {
     "normalized_tasks_count",
     "task_reclassified_count",
 }
+EXPECTED_JOB_KEYS = {
+    "job_id",
+    "job_type",
+    "status",
+    "payload",
+    "result",
+    "attempts",
+    "max_attempts",
+}
 
 
 def build_lock_path() -> Path:
@@ -108,6 +117,33 @@ def build_payload() -> dict[str, Any]:
     }
 
 
+def build_mode() -> str:
+    return (os.environ.get("MEMORY_CONSOLIDATE_MODE") or "enqueue").strip().lower()
+
+
+def build_idempotency_key(payload: dict[str, Any]) -> str:
+    explicit = os.environ.get("MEMORY_CONSOLIDATE_IDEMPOTENCY_KEY")
+    if explicit:
+        return explicit.strip()
+    window_seconds = max(60, int(os.environ.get("MEMORY_CONSOLIDATE_IDEMPOTENCY_WINDOW_SECONDS", "3600")))
+    bucket = int(time.time() // window_seconds)
+    user_scope = payload.get("user_id") or "*"
+    project_scope = payload.get("project_id") or "*"
+    dry_run = "dry" if payload.get("dry_run") else "live"
+    return f"consolidate:{user_scope}:{project_scope}:{dry_run}:bucket:{bucket}"
+
+
+def build_job_request(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_type": "consolidate",
+        "payload": payload,
+        "user_id": payload.get("user_id"),
+        "project_id": payload.get("project_id"),
+        "idempotency_key": build_idempotency_key(payload),
+        "max_attempts": max(1, int(os.environ.get("MEMORY_CONSOLIDATE_JOB_MAX_ATTEMPTS", "3"))),
+    }
+
+
 def build_client() -> httpx.Client:
     api_key = os.environ.get("MEMORY_API_KEY") or os.environ.get("ADMIN_API_KEY", "")
     if not api_key:
@@ -120,20 +156,36 @@ def build_client() -> httpx.Client:
     )
 
 
+def validate_inline_result(data: dict[str, Any]) -> dict[str, Any]:
+    missing = EXPECTED_KEYS - set(data.keys())
+    if missing:
+        raise RuntimeError(f"consolidate response missing expected keys: {sorted(missing)}")
+    return data
+
+
+def validate_job_result(data: dict[str, Any]) -> dict[str, Any]:
+    missing = EXPECTED_JOB_KEYS - set(data.keys())
+    if missing:
+        raise RuntimeError(f"governance job response missing expected keys: {sorted(missing)}")
+    return data
+
+
 def run_consolidation(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
     attempts = max(1, int(os.environ.get("MEMORY_CONSOLIDATE_ATTEMPTS", "3")))
     retry_delay = max(0.0, float(os.environ.get("MEMORY_CONSOLIDATE_RETRY_DELAY_SECONDS", "1")))
+    mode = build_mode()
+    if mode not in {"inline", "enqueue"}:
+        raise RuntimeError(f"Unsupported MEMORY_CONSOLIDATE_MODE: {mode}")
+    path = "/consolidate" if mode == "inline" else "/governance/jobs"
+    body = payload if mode == "inline" else build_job_request(payload)
     last_error: RuntimeError | None = None
     for attempt in range(1, attempts + 1):
-        response = client.post("/consolidate", json=payload)
+        response = client.post(path, json=body)
         if response.status_code == 200:
             data = response.json()
-            missing = EXPECTED_KEYS - set(data.keys())
-            if missing:
-                raise RuntimeError(f"consolidate response missing expected keys: {sorted(missing)}")
-            return data
+            return validate_inline_result(data) if mode == "inline" else validate_job_result(data)
         last_error = RuntimeError(
-            f"consolidate failed with status {response.status_code}: {getattr(response, 'text', '')}"
+            f"{mode} consolidate failed with status {response.status_code}: {getattr(response, 'text', '')}"
         )
         if attempt < attempts:
             time.sleep(retry_delay)

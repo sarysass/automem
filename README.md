@@ -4,7 +4,8 @@
 
 `automem` 现在同时包含三层内容：
 
-- 服务端核心：FastAPI 后端、检索与治理逻辑、任务注册与 consolidation
+- 服务端核心：FastAPI hot-path API、检索与治理逻辑、任务注册与审计
+- 后台治理层：worker 队列、consolidation 作业、失败重试与恢复
 - 管理与运维层：CLI 优先入口、中文前端管理界面、运维脚本与 systemd 模板
 - 客户端接入层：Codex、OpenClaw、OpenCode、Claude Code 的公开 adapter 模板
 
@@ -65,7 +66,15 @@ uv run cli/memory --pretty agent-key create --agent-id openclaw-instance --label
 uv run cli/memory --pretty cache rebuild --user-id example-user
 uv run cli/memory --pretty metrics
 uv run cli/memory --pretty consolidate --dry-run
+python scripts/scheduled_consolidate.py
+python scripts/governance_worker.py
 ```
+
+其中：
+
+- `scripts/scheduled_consolidate.py` 默认只负责 enqueue consolidate 作业
+- `scripts/governance_worker.py` 负责消费后台治理队列
+- `GET /runtime-topology` 可查看 API / worker / MCP 的职责划分
 
 ## Adapter 概览
 

@@ -8,9 +8,9 @@ import secrets
 import sqlite3
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 try:
     from dotenv import load_dotenv
@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -255,6 +255,22 @@ class TaskNormalizeRequest(BaseModel):
     prune_non_work_archived: bool = False
     archive_work_without_memory_active: bool = True
     prune_work_without_memory_archived: bool = False
+
+
+class GovernanceJobCreateRequest(BaseModel):
+    job_type: Literal["consolidate"]
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: Optional[str] = None
+    max_attempts: int = 3
+    user_id: Optional[str] = None
+    project_id: Optional[str] = None
+    run_inline: bool = False
+
+
+class GovernanceJobRunRequest(BaseModel):
+    worker_id: Optional[str] = None
+    job_types: Optional[List[str]] = None
+    lease_seconds: int = 300
 
 
 def utcnow_iso() -> str:
@@ -1659,6 +1675,37 @@ def ensure_task_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS governance_jobs (
+                job_id TEXT PRIMARY KEY,
+                job_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                idempotency_key TEXT UNIQUE,
+                user_id TEXT,
+                project_id TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error_text TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 3,
+                lease_expires_at TEXT,
+                leased_by TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        add_column_if_missing(conn, "governance_jobs", "leased_by", "TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_governance_jobs_status_created ON governance_jobs(status, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_governance_jobs_type_status ON governance_jobs(job_type, status)"
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS memory_cache (
                 memory_id TEXT PRIMARY KEY,
                 user_id TEXT,
@@ -1997,6 +2044,18 @@ def compute_metrics() -> dict[str, Any]:
             "SELECT COALESCE(category, 'uncategorized') AS category, COUNT(*) AS count FROM memory_cache GROUP BY COALESCE(category, 'uncategorized')"
         ).fetchall()
         cached_memories = conn.execute("SELECT COUNT(*) FROM memory_cache").fetchone()[0]
+        governance_status_rows = conn.execute(
+            "SELECT status, COUNT(*) AS count FROM governance_jobs GROUP BY status"
+        ).fetchall()
+        governance_type_rows = conn.execute(
+            "SELECT job_type, COUNT(*) AS count FROM governance_jobs GROUP BY job_type"
+        ).fetchall()
+        oldest_pending = conn.execute(
+            "SELECT created_at FROM governance_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+        ).fetchone()
+        last_completed = conn.execute(
+            "SELECT finished_at FROM governance_jobs WHERE status = 'completed' ORDER BY finished_at DESC LIMIT 1"
+        ).fetchone()
 
     tasks_by_status: dict[str, int] = {}
     tasks_by_kind: dict[str, int] = {}
@@ -2035,7 +2094,448 @@ def compute_metrics() -> dict[str, Any]:
             "by_domain": {row["domain"]: row["count"] for row in memory_domain_rows},
             "by_category": {row["category"]: row["count"] for row in memory_category_rows},
         },
+        "governance_jobs": {
+            "by_status": {row["status"]: row["count"] for row in governance_status_rows},
+            "by_type": {row["job_type"]: row["count"] for row in governance_type_rows},
+            "pending": next((row["count"] for row in governance_status_rows if row["status"] == "pending"), 0),
+            "running": next((row["count"] for row in governance_status_rows if row["status"] == "running"), 0),
+            "failed": next((row["count"] for row in governance_status_rows if row["status"] == "failed"), 0),
+            "completed": next((row["count"] for row in governance_status_rows if row["status"] == "completed"), 0),
+            "oldest_pending_created_at": str(oldest_pending["created_at"]) if oldest_pending else None,
+            "last_completed_at": str(last_completed["finished_at"]) if last_completed else None,
+        },
     }
+
+
+GOVERNANCE_JOB_STATUS_PENDING = "pending"
+GOVERNANCE_JOB_STATUS_RUNNING = "running"
+GOVERNANCE_JOB_STATUS_COMPLETED = "completed"
+GOVERNANCE_JOB_STATUS_FAILED = "failed"
+SUPPORTED_GOVERNANCE_JOB_TYPES = {"consolidate"}
+
+
+def serialize_governance_job_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    payload_json = item.pop("payload_json", "{}") or "{}"
+    result_json = item.pop("result_json", "{}") or "{}"
+    item["payload"] = json.loads(payload_json)
+    item["result"] = json.loads(result_json)
+    item["can_retry"] = bool(
+        item.get("status") in {GOVERNANCE_JOB_STATUS_PENDING, GOVERNANCE_JOB_STATUS_RUNNING}
+        or (
+            item.get("status") == GOVERNANCE_JOB_STATUS_FAILED
+            and int(item.get("attempts") or 0) < int(item.get("max_attempts") or 0)
+        )
+    )
+    return item
+
+
+def build_runtime_topology() -> dict[str, Any]:
+    return {
+        "api": {
+            "role": "hot_path_admission_and_query",
+            "hot_path_endpoints": [
+                "/memory-route",
+                "/memories",
+                "/task-resolution",
+                "/task-summaries",
+                "/search",
+            ],
+            "background_submission_endpoint": "/governance/jobs",
+            "notes": [
+                "Hot path keeps route, admission, and retrieval synchronous.",
+                "Heavy cleanup and maintenance should be queued for the governance worker.",
+            ],
+        },
+        "worker": {
+            "role": "background_governance_executor",
+            "run_next_endpoint": "/governance/jobs/run-next",
+            "supported_job_types": sorted(SUPPORTED_GOVERNANCE_JOB_TYPES),
+            "script_entrypoints": [
+                "scripts/governance_worker.py",
+                "scripts/scheduled_consolidate.py",
+            ],
+            "contracts": [
+                "Jobs are idempotent through caller-supplied idempotency keys.",
+                "Workers recover stale running jobs after lease expiry.",
+            ],
+        },
+        "mcp_control_plane": {
+            "role": "distribution_and_tooling_surface",
+            "allowed_hot_path_tools": [
+                "memory_route",
+                "memory_capture",
+                "memory_search",
+                "task_summary_store",
+                "memory_metrics",
+            ],
+            "notes": [
+                "Adapters should not embed local governance cleanup branches.",
+                "Background governance belongs to API-owned jobs and workers.",
+            ],
+        },
+    }
+
+
+def fetch_governance_job(job_id: str) -> Optional[dict[str, Any]]:
+    ensure_task_db()
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM governance_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return serialize_governance_job_row(row)
+
+
+def list_governance_jobs(
+    *,
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    ensure_task_db()
+    query = "SELECT * FROM governance_jobs WHERE 1=1"
+    params: list[Any] = []
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if job_type:
+        query += " AND job_type = ?"
+        params.append(job_type)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(1, min(limit, 200)))
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(query, params).fetchall()
+    return [serialize_governance_job_row(row) for row in rows]
+
+
+def enqueue_governance_job(
+    *,
+    job_type: str,
+    payload: dict[str, Any],
+    user_id: Optional[str],
+    project_id: Optional[str],
+    idempotency_key: Optional[str],
+    max_attempts: int,
+    created_by: Optional[str],
+) -> dict[str, Any]:
+    normalized_type = normalize_text(job_type)
+    if normalized_type not in SUPPORTED_GOVERNANCE_JOB_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported governance job type: {job_type}")
+    ensure_task_db()
+    now = utcnow_iso()
+    normalized_key = normalize_text(idempotency_key or "") or None
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        if normalized_key:
+            existing = conn.execute(
+                "SELECT * FROM governance_jobs WHERE idempotency_key = ?",
+                (normalized_key,),
+            ).fetchone()
+            if existing:
+                job = serialize_governance_job_row(existing)
+                job["deduplicated"] = True
+                return job
+        job_id = f"govjob_{uuid.uuid4().hex}"
+        conn.execute(
+            """
+            INSERT INTO governance_jobs (
+                job_id, job_type, status, idempotency_key, user_id, project_id,
+                payload_json, result_json, error_text, attempts, max_attempts,
+                lease_expires_at, leased_by, started_at, finished_at, created_by,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, '{}', NULL, 0, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
+            """,
+            (
+                job_id,
+                normalized_type,
+                GOVERNANCE_JOB_STATUS_PENDING,
+                normalized_key,
+                user_id,
+                project_id,
+                json.dumps(payload, ensure_ascii=False),
+                max(1, min(max_attempts, 10)),
+                created_by,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+    job = fetch_governance_job(job_id)
+    assert job is not None
+    return job
+
+
+def claim_next_governance_job(
+    *,
+    worker_id: str,
+    job_types: Optional[list[str]],
+    lease_seconds: int,
+) -> Optional[dict[str, Any]]:
+    ensure_task_db()
+    allowed_job_types = sorted(
+        {normalize_text(item) for item in (job_types or []) if normalize_text(item)}
+        & SUPPORTED_GOVERNANCE_JOB_TYPES
+    )
+    now = utcnow_iso()
+    lease_until = (datetime.now(timezone.utc) + timedelta(seconds=max(30, min(lease_seconds, 3600)))).isoformat()
+    query = """
+        SELECT *
+        FROM governance_jobs
+        WHERE (
+            status = ?
+            OR (status = ? AND COALESCE(lease_expires_at, '') != '' AND lease_expires_at <= ?)
+        )
+    """
+    params: list[Any] = [
+        GOVERNANCE_JOB_STATUS_PENDING,
+        GOVERNANCE_JOB_STATUS_RUNNING,
+        now,
+    ]
+    if allowed_job_types:
+        placeholders = ", ".join("?" for _ in allowed_job_types)
+        query += f" AND job_type IN ({placeholders})"
+        params.extend(allowed_job_types)
+    query += " ORDER BY created_at ASC LIMIT 1"
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(query, params).fetchone()
+        if not row:
+            conn.commit()
+            return None
+        conn.execute(
+            """
+            UPDATE governance_jobs
+            SET status = ?,
+                attempts = attempts + 1,
+                lease_expires_at = ?,
+                leased_by = ?,
+                started_at = COALESCE(started_at, ?),
+                updated_at = ?
+            WHERE job_id = ?
+            """,
+            (
+                GOVERNANCE_JOB_STATUS_RUNNING,
+                lease_until,
+                worker_id,
+                now,
+                now,
+                row["job_id"],
+            ),
+        )
+        conn.commit()
+    claimed = fetch_governance_job(str(row["job_id"]))
+    assert claimed is not None
+    return claimed
+
+
+def claim_governance_job_by_id(
+    *,
+    job_id: str,
+    worker_id: str,
+    lease_seconds: int,
+) -> Optional[dict[str, Any]]:
+    ensure_task_db()
+    now = utcnow_iso()
+    lease_until = (datetime.now(timezone.utc) + timedelta(seconds=max(30, min(lease_seconds, 3600)))).isoformat()
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM governance_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            conn.commit()
+            return None
+        current_status = str(row["status"] or "")
+        lease_expires_at = str(row["lease_expires_at"] or "")
+        if current_status not in {GOVERNANCE_JOB_STATUS_PENDING, GOVERNANCE_JOB_STATUS_RUNNING}:
+            conn.commit()
+            return None
+        if current_status == GOVERNANCE_JOB_STATUS_RUNNING and lease_expires_at and lease_expires_at > now:
+            conn.commit()
+            return None
+        conn.execute(
+            """
+            UPDATE governance_jobs
+            SET status = ?,
+                attempts = attempts + 1,
+                lease_expires_at = ?,
+                leased_by = ?,
+                started_at = COALESCE(started_at, ?),
+                updated_at = ?
+            WHERE job_id = ?
+            """,
+            (
+                GOVERNANCE_JOB_STATUS_RUNNING,
+                lease_until,
+                worker_id,
+                now,
+                now,
+                job_id,
+            ),
+        )
+        conn.commit()
+    claimed = fetch_governance_job(job_id)
+    assert claimed is not None
+    return claimed
+
+
+def finalize_governance_job(
+    *,
+    job_id: str,
+    status: str,
+    result: Optional[dict[str, Any]],
+    error_text: Optional[str],
+) -> dict[str, Any]:
+    ensure_task_db()
+    now = utcnow_iso()
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.execute(
+            """
+            UPDATE governance_jobs
+            SET status = ?,
+                result_json = ?,
+                error_text = ?,
+                lease_expires_at = NULL,
+                leased_by = NULL,
+                finished_at = ?,
+                updated_at = ?
+            WHERE job_id = ?
+            """,
+            (
+                status,
+                json.dumps(result or {}, ensure_ascii=False),
+                error_text,
+                now,
+                now,
+                job_id,
+            ),
+        )
+        conn.commit()
+    job = fetch_governance_job(job_id)
+    assert job is not None
+    return job
+
+
+def release_governance_job_for_retry(*, job_id: str, error_text: str) -> dict[str, Any]:
+    ensure_task_db()
+    now = utcnow_iso()
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT attempts, max_attempts FROM governance_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            raise RuntimeError(f"Missing governance job {job_id}")
+        attempts = int(row["attempts"] or 0)
+        max_attempts = int(row["max_attempts"] or 0)
+        next_status = (
+            GOVERNANCE_JOB_STATUS_PENDING
+            if attempts < max_attempts
+            else GOVERNANCE_JOB_STATUS_FAILED
+        )
+        conn.execute(
+            """
+            UPDATE governance_jobs
+            SET status = ?,
+                error_text = ?,
+                lease_expires_at = NULL,
+                leased_by = NULL,
+                updated_at = ?
+            WHERE job_id = ?
+            """,
+            (
+                next_status,
+                error_text,
+                now,
+                job_id,
+            ),
+        )
+        conn.commit()
+    job = fetch_governance_job(job_id)
+    assert job is not None
+    return job
+
+
+def dispatch_governance_job(
+    job: dict[str, Any],
+    *,
+    worker_id: str,
+) -> dict[str, Any]:
+    job_id = str(job["job_id"])
+    job_type = str(job["job_type"])
+    payload = dict(job.get("payload") or {})
+    if job_type != "consolidate":
+        return finalize_governance_job(
+            job_id=job_id,
+            status=GOVERNANCE_JOB_STATUS_FAILED,
+            result=None,
+            error_text=f"Unsupported governance job type: {job_type}",
+        )
+    try:
+        response = run_consolidation_operation(
+            ConsolidateRequest(**payload),
+            runtime_path="governance_worker",
+            worker_id=worker_id,
+            job_id=job_id,
+        )
+        write_audit(
+            actor_type="governance_worker",
+            actor_label=worker_id,
+            actor_agent_id=worker_id,
+            event_type="consolidate",
+            user_id=response.get("user_id"),
+            project_id=response.get("project_id"),
+            detail=response,
+        )
+        write_audit(
+            actor_type="governance_worker",
+            actor_label=worker_id,
+            actor_agent_id=worker_id,
+            event_type="governance_job_complete",
+            user_id=response.get("user_id"),
+            project_id=response.get("project_id"),
+            detail={
+                "job_id": job_id,
+                "job_type": job_type,
+                "runtime_path": response.get("runtime_path"),
+                "result": response,
+            },
+        )
+        return finalize_governance_job(
+            job_id=job_id,
+            status=GOVERNANCE_JOB_STATUS_COMPLETED,
+            result=response,
+            error_text=None,
+        )
+    except Exception as exc:
+        released = release_governance_job_for_retry(job_id=job_id, error_text=str(exc))
+        write_audit(
+            actor_type="governance_worker",
+            actor_label=worker_id,
+            actor_agent_id=worker_id,
+            event_type="governance_job_failed",
+            user_id=job.get("user_id"),
+            project_id=job.get("project_id"),
+            detail={
+                "job_id": job_id,
+                "job_type": job_type,
+                "attempts": released.get("attempts"),
+                "max_attempts": released.get("max_attempts"),
+                "status": released.get("status"),
+                "error": str(exc),
+            },
+        )
+        return released
 
 
 def require_scope(auth: dict[str, Any], scope: str) -> None:
@@ -3453,8 +3953,16 @@ def healthz(auth: dict[str, Any] = Depends(verify_api_key)):
         "embed_model": CONFIG["embedder"]["config"]["model"],
         "qdrant": f"{CONFIG['vector_store']['config']['host']}:{CONFIG['vector_store']['config']['port']}",
         "task_db": str(TASK_DB_PATH),
+        "runtime": build_runtime_topology(),
         "metrics": compute_metrics(),
     }
+
+
+@app.get("/runtime-topology")
+@app.get("/v1/runtime-topology")
+def runtime_topology(auth: dict[str, Any] = Depends(verify_api_key)):
+    require_scope(auth, "metrics")
+    return {"runtime": build_runtime_topology(), "metrics": compute_metrics()["governance_jobs"]}
 
 
 @app.post("/memories")
@@ -3918,10 +4426,13 @@ def metrics(auth: dict[str, Any] = Depends(verify_api_key)):
     return {"metrics": compute_metrics()}
 
 
-@app.post("/consolidate")
-@app.post("/v1/consolidate")
-def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
-    require_scope(auth, "admin")
+def run_consolidation_operation(
+    payload: ConsolidateRequest,
+    *,
+    runtime_path: str,
+    worker_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+) -> dict[str, Any]:
     ensure_task_db()
     rebuilt_cache_count = rebuild_memory_cache(user_id=payload.user_id, run_id=None, agent_id=None)
     duplicate_memory_ids: list[str] = []
@@ -4106,7 +4617,7 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
             archive_active_long_term_facts(older_rows, superseded_by=newest_id, archived_at=utcnow_iso())
 
     archived_tasks_count = task_normalize_result["archived_tasks"] + closed_tasks_archived
-    result = {
+    return {
         "dry_run": payload.dry_run,
         "rebuilt_cache_count": rebuilt_cache_count,
         "duplicate_long_term_count": len(duplicate_memory_ids),
@@ -4126,7 +4637,17 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         "closed_tasks_archived_count": closed_tasks_archived,
         "user_id": payload.user_id,
         "project_id": payload.project_id,
+        "runtime_path": runtime_path,
+        "worker_id": worker_id,
+        "job_id": job_id,
     }
+
+
+@app.post("/consolidate")
+@app.post("/v1/consolidate")
+def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
+    require_scope(auth, "admin")
+    result = run_consolidation_operation(payload, runtime_path="api_inline")
     write_audit(
         actor_type=auth["actor_type"],
         actor_label=auth.get("actor_label"),
@@ -4135,6 +4656,98 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         detail=result,
     )
     return result
+
+
+@app.post("/governance/jobs")
+@app.post("/v1/governance/jobs")
+def governance_jobs_create(payload: GovernanceJobCreateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
+    require_scope(auth, "admin")
+    payload.user_id = enforce_user_identity(auth, payload.user_id)
+    payload.project_id = enforce_project_identity(auth, payload.project_id)
+    if payload.job_type == "consolidate":
+        consolidate_payload = ConsolidateRequest(**payload.payload)
+        consolidate_payload.user_id = payload.user_id or consolidate_payload.user_id
+        consolidate_payload.project_id = payload.project_id or consolidate_payload.project_id
+        payload_data = consolidate_payload.model_dump()
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported governance job type: {payload.job_type}")
+    job = enqueue_governance_job(
+        job_type=payload.job_type,
+        payload=payload_data,
+        user_id=payload.user_id,
+        project_id=payload.project_id,
+        idempotency_key=payload.idempotency_key,
+        max_attempts=payload.max_attempts,
+        created_by=auth.get("actor_label") or auth.get("agent_id") or auth["actor_type"],
+    )
+    if payload.run_inline and job.get("status") != GOVERNANCE_JOB_STATUS_COMPLETED:
+        worker_id = f"inline-{auth.get('actor_label') or auth['actor_type']}"
+        claimed = claim_governance_job_by_id(
+            job_id=str(job["job_id"]),
+            worker_id=worker_id,
+            lease_seconds=300,
+        )
+        if claimed and claimed["job_id"] == job["job_id"]:
+            job = dispatch_governance_job(claimed, worker_id=worker_id)
+    write_audit(
+        actor_type=auth["actor_type"],
+        actor_label=auth.get("actor_label"),
+        actor_agent_id=auth.get("agent_id"),
+        event_type="governance_job_enqueue",
+        user_id=payload.user_id,
+        project_id=payload.project_id,
+        detail={
+            "job_id": job["job_id"],
+            "job_type": job["job_type"],
+            "status": job["status"],
+            "idempotency_key": job.get("idempotency_key"),
+            "run_inline": payload.run_inline,
+            "deduplicated": job.get("deduplicated", False),
+        },
+    )
+    return job
+
+
+@app.get("/governance/jobs")
+@app.get("/v1/governance/jobs")
+def governance_jobs_list(
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    limit: int = 50,
+    auth: dict[str, Any] = Depends(verify_api_key),
+):
+    require_scope(auth, "admin")
+    return {"jobs": list_governance_jobs(status=status, job_type=job_type, limit=limit)}
+
+
+@app.get("/governance/jobs/{job_id}")
+@app.get("/v1/governance/jobs/{job_id}")
+def governance_jobs_get(job_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
+    require_scope(auth, "admin")
+    job = fetch_governance_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Governance job not found")
+    return job
+
+
+@app.post("/governance/jobs/run-next")
+@app.post("/v1/governance/jobs/run-next")
+def governance_jobs_run_next(payload: GovernanceJobRunRequest, auth: dict[str, Any] = Depends(verify_api_key)):
+    require_scope(auth, "admin")
+    worker_id = normalize_text(payload.worker_id or auth.get("agent_id") or auth.get("actor_label") or "governance-worker")
+    claimed = claim_next_governance_job(
+        worker_id=worker_id,
+        job_types=payload.job_types,
+        lease_seconds=payload.lease_seconds,
+    )
+    if not claimed:
+        return {"status": "idle", "worker_id": worker_id}
+    job = dispatch_governance_job(claimed, worker_id=worker_id)
+    return {
+        "status": "processed",
+        "worker_id": worker_id,
+        "job": job,
+    }
 
 
 @app.post("/agent-keys")

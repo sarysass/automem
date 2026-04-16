@@ -1,22 +1,22 @@
 # Requirements
 
-**Coverage:** 8/13 satisfied, 5 pending gap closure
+**Coverage:** 13/13 satisfied, 0 pending gap closure
 
 ## Requirement Checklist
 
-- [ ] `AUTH-01` Secure Defaults
+- [x] `AUTH-01` Secure Defaults
   服务未显式配置认证时，不得以匿名管理员模式启动或放行业务请求。
 
-- [ ] `AUTH-02` Tenant Binding
+- [x] `AUTH-02` Tenant Binding
   非管理员 API key 必须绑定 `user_id`，避免不同用户数据混写到共享身份。
 
-- [ ] `GOV-01` Backend-Owned Governance
+- [x] `GOV-01` Backend-Owned Governance
   自动 capture 的长期记忆 / task 判断以 backend 为唯一决策点，adapter 只保留轻量抑制。
 
-- [ ] `CONS-01` Fresh Cache Before Maintenance
+- [x] `CONS-01` Fresh Cache Before Maintenance
   `tasks/normalize` 和 `consolidate` 必须先基于最新后端状态刷新 `memory_cache`。
 
-- [ ] `CONS-02` Safe Canonical Rewrite
+- [x] `CONS-02` Safe Canonical Rewrite
   `consolidate` 的 canonical rewrite 必须先写入新记录，再删除旧记录，避免失败时数据丢失。
 
 - [x] `IAM-01` Shared Visibility Model
@@ -47,11 +47,11 @@
 
 | REQ-ID | Description | Phase | Priority | Status |
 |-------|-------------|-------|----------|--------|
-| AUTH-01 | Secure defaults | 08 | must | Pending |
-| AUTH-02 | Tenant binding | 08 | must | Pending |
-| GOV-01 | Backend-owned governance | 08 | must | Pending |
-| CONS-01 | Fresh cache before maintenance | 08 | must | Pending |
-| CONS-02 | Safe canonical rewrite | 08 | must | Pending |
+| AUTH-01 | Secure defaults | 08 | must | Satisfied |
+| AUTH-02 | Tenant binding | 08 | must | Satisfied |
+| GOV-01 | Backend-owned governance | 08 | must | Satisfied |
+| CONS-01 | Fresh cache before maintenance | 08 | must | Satisfied |
+| CONS-02 | Safe canonical rewrite | 08 | must | Satisfied |
 | IAM-01 | Shared visibility model | 04 | must | Satisfied |
 | IAM-02 | Consistent access enforcement | 04 | must | Satisfied |
 | RET-01 | Hybrid retrieval | 05 | must | Satisfied |
@@ -63,6 +63,9 @@
 
 ## Audit Notes
 
-- `v1.0-MILESTONE-AUDIT.md` 将 `AUTH-01`、`AUTH-02`、`GOV-01`、`CONS-01`、`CONS-02` 标记为 `orphaned`，原因不是实现缺失，而是 Phase 01-03 缺少 `VERIFICATION.md`。
-- 因此这些 requirements 已被重置为 `Pending`，并统一重新分配到 Phase `08` 进行 gap closure。
-- Milestone 级 `*-VALIDATION.md` 缺失覆盖由 Phase `09` 关闭，但不单独新增 requirement ID。
+- Phase `08` 已恢复 foundational requirement 的证据链，不再只是 summary 声明完成：
+  - `AUTH-01`、`AUTH-02` 的证据来源是 `.planning/phases/01-auth-defaults-and-tenant-isolation/01-VERIFICATION.md`
+  - `GOV-01` 的证据来源是 `.planning/phases/02-centralize-memory-governance/02-VERIFICATION.md`
+  - `CONS-01`、`CONS-02` 的证据来源是 `.planning/phases/03-stabilize-cache-and-consolidation/03-VERIFICATION.md`
+- 因此这 5 个 requirements 已从 Phase `08` 的 gap closure 回到 `Satisfied`，不再作为 milestone audit 的 orphaned gaps。
+- Milestone 级 `*-VALIDATION.md` / Nyquist 覆盖仍然缺失，这部分验证债继续由 Phase `09` 关闭，但不单独新增 requirement ID。
