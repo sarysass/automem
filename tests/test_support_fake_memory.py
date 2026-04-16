@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from importlib import import_module
 
+import pytest
+
 
 def test_fake_memory_support_matches_existing_crud_contract() -> None:
     fake_memory_module = import_module("tests.support.fake_memory")
@@ -49,3 +51,56 @@ def test_fake_memory_ids_do_not_get_reused_after_delete() -> None:
     assert replacement["id"] == "mem_4"
     assert memory.get("mem_3")["memory"] == "gamma"
     assert memory.get("mem_4")["memory"] == "delta"
+
+
+# --- Task 2: faithful _extract_text ---
+
+def test_extract_text_structured_content_stored_as_text() -> None:
+    """Structured list-of-parts content is stored as plain text, not Python repr."""
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    added = memory.add(
+        [{"role": "user", "content": [{"type": "text", "text": "alpha"}]}],
+    )
+    record = memory.get(added["id"])
+    assert record["memory"] == "alpha"
+    # Regression: must NOT produce Python repr of the list
+    assert "[" not in record["memory"]
+    assert "type" not in record["memory"]
+
+
+def test_extract_text_none_content_yields_empty_string() -> None:
+    """A message with content=None (e.g., tool turn) yields empty string and does not raise."""
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    added = memory.add(
+        [{"role": "tool", "content": None}],
+    )
+    record = memory.get(added["id"])
+    assert record["memory"] == ""
+
+
+def test_extract_text_missing_content_key_raises_type_error() -> None:
+    """A message dict without a 'content' key raises TypeError identifying the missing key."""
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    with pytest.raises(TypeError, match="content"):
+        memory.add([{"role": "user"}])
+
+
+def test_extract_text_non_text_parts_ignored() -> None:
+    """Non-text parts (image_url, tool_use, etc.) are dropped; only text parts are joined."""
+    fake_memory_module = import_module("tests.support.fake_memory")
+    memory = fake_memory_module.FakeMemory()
+
+    parts = [
+        {"type": "text", "text": "a"},
+        {"type": "image_url", "image_url": {"url": "http://example.com/img.png"}},
+        {"type": "text", "text": "b"},
+    ]
+    added = memory.add([{"role": "user", "content": parts}])
+    record = memory.get(added["id"])
+    assert record["memory"] == "a\nb"
