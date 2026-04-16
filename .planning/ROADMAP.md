@@ -11,7 +11,7 @@ automem is evolving from foundational memory hardening into a shared memory cont
 - [x] **Phase 03: Stabilize Cache And Consolidation** - Refresh cache before maintenance and make consolidation rewrites safer.
 - [x] **Phase 04: Shared Identity And Access Model** - Extend visibility and access from raw user scope to project-aware shared collaboration. (completed 2026-04-15)
 - [x] **Phase 05: Retrieval And Explainability** - Upgrade recall to hybrid retrieval and make result provenance visible. (completed 2026-04-15)
-- [ ] **Phase 06: Temporal Facts And Conflict Governance** - Model durable memory as evolving facts with lifecycle and conflict states.
+- [x] **Phase 06: Temporal Facts And Conflict Governance** - Model durable memory as evolving facts with lifecycle and conflict states. (completed 2026-04-15)
 - [ ] **Phase 07: Runtime Architecture Upgrade** - Split hot-path admission from background governance and clarify API/worker/MCP roles.
 
 ## Phase Details
@@ -89,10 +89,10 @@ Plans:
   1. 长期记忆可表达事实的生效、失效、替代与历史版本关系。
   2. 针对同一事实位点的矛盾输入会被检测并进入显式治理状态，而不是静默共存。
   3. 后台整理链路可关闭旧事实并维护事实链，而不只是文本 dedupe。
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 06-01: Introduce fact lifecycle metadata, conflict detection, and supersede governance
+- [x] 06-01: Introduce fact lifecycle metadata, conflict detection, and supersede governance
 
 ### Phase 07: Runtime Architecture Upgrade
 **Goal:** 将治理链路拆分为 hot path / background path，并收口到 API + worker + MCP 的生产架构。
@@ -114,7 +114,7 @@ Plans:
 | 1. Auth Defaults And Tenant Isolation | 1/1 | Complete | 2026-04-16 |
 | 2. Centralize Memory Governance | 1/1 | Complete | 2026-04-16 |
 | 3. Stabilize Cache And Consolidation | 1/1 | Complete | 2026-04-16 |
-| 4. Shared Identity And Access Model | 0/1 | In progress | - |
-| 5. Retrieval And Explainability | 0/1 | Not started | - |
-| 6. Temporal Facts And Conflict Governance | 0/1 | Not started | - |
-| 7. Runtime Architecture Upgrade | 0/1 | Not started | - |
+| 4. Shared Identity And Access Model | 1/1 | Complete | 2026-04-15 |
+| 5. Retrieval And Explainability | 1/1 | Complete | 2026-04-15 |
+| 6. Temporal Facts And Conflict Governance | 1/1 | Complete | 2026-04-15 |
+| 7. Runtime Architecture Upgrade | 0/1 | In progress | - |

@@ -22,3 +22,12 @@ backend/.env
 *.sqlite
 *.sqlite3
 *.log
+
+# Local GSD planning artifacts
+.planning/codebase/
+.planning/config.json
+.planning/phases/*/*-PLAN.md
+.planning/phases/*/*-CONTEXT.md
+.planning/phases/01-auth-defaults-and-tenant-isolation/01-01-SUMMARY.md
+.planning/phases/02-centralize-memory-governance/02-01-SUMMARY.md
+.planning/phases/03-stabilize-cache-and-consolidation/03-01-SUMMARY.md

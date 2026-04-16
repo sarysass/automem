@@ -81,6 +81,115 @@ def test_add_memory_canonicalizes_preference_alias_and_skips_duplicate(client, a
     assert [item["memory"] for item in results] == ["偏好使用中文沟通"]
 
 
+def test_long_term_fact_supersedes_previous_active_fact_and_history_is_opt_in(client, auth_headers):
+    first = client.post(
+        "/memories",
+        headers=auth_headers,
+        json={
+            "messages": [{"role": "user", "content": "偏好使用中文沟通"}],
+            "user_id": "user-a",
+            "infer": False,
+            "metadata": {"domain": "long_term", "category": "preference"},
+        },
+    )
+    assert first.status_code == 200, first.text
+    first_payload = first.json()
+
+    second = client.post(
+        "/memories",
+        headers=auth_headers,
+        json={
+            "messages": [{"role": "user", "content": "偏好使用英文沟通"}],
+            "user_id": "user-a",
+            "infer": False,
+            "metadata": {"domain": "long_term", "category": "preference"},
+        },
+    )
+    assert second.status_code == 200, second.text
+    second_payload = second.json()
+    assert second_payload["fact_status"] == "active"
+    assert second_payload["fact_action"] == "superseded"
+    assert second_payload["superseded_memory_ids"] == [first_payload["results"][0]["id"]]
+
+    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    assert listed.status_code == 200, listed.text
+    memories = listed.json()["results"]
+    assert len(memories) == 2
+    by_status = {item["metadata"]["status"]: item for item in memories}
+    assert by_status["active"]["memory"] == "偏好使用英文沟通"
+    assert by_status["active"]["metadata"]["supersedes"] == [first_payload["results"][0]["id"]]
+    assert by_status["superseded"]["memory"] == "偏好使用中文沟通"
+    assert by_status["superseded"]["metadata"]["superseded_by"] == second_payload["results"][0]["id"]
+    assert by_status["superseded"]["metadata"]["valid_to"]
+
+    search = client.post(
+        "/search",
+        headers=auth_headers,
+        json={"query": "沟通", "user_id": "user-a"},
+    )
+    assert search.status_code == 200, search.text
+    payload = search.json()
+    assert [item["status"] for item in payload["results"]] == ["active"]
+    assert payload["results"][0]["memory"] == "偏好使用英文沟通"
+
+    history = client.post(
+        "/search",
+        headers=auth_headers,
+        json={"query": "沟通", "user_id": "user-a", "include_history": True},
+    )
+    assert history.status_code == 200, history.text
+    history_payload = history.json()
+    assert {item["status"] for item in history_payload["results"]} == {"active", "superseded"}
+
+
+def test_long_term_conflict_review_keeps_existing_active_fact(client, auth_headers):
+    first = add_long_term_memory(client, auth_headers, text="公司是Example Corp", user_id="user-a", category="project_context")
+
+    second = client.post(
+        "/memories",
+        headers=auth_headers,
+        json={
+            "messages": [{"role": "user", "content": "公司是Another Corp"}],
+            "user_id": "user-a",
+            "infer": False,
+            "metadata": {"domain": "long_term", "category": "project_context"},
+        },
+    )
+    assert second.status_code == 200, second.text
+    second_payload = second.json()
+    assert second_payload["fact_status"] == "conflict_review"
+    assert second_payload["fact_action"] == "review_required"
+    assert second_payload["conflicts_with"] == [first["results"][0]["id"]]
+
+    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    assert listed.status_code == 200, listed.text
+    memories = listed.json()["results"]
+    active = [item for item in memories if item["metadata"].get("status") == "active"]
+    review = [item for item in memories if item["metadata"].get("status") == "conflict_review"]
+    assert [item["memory"] for item in active] == ["公司是Example Corp"]
+    assert [item["memory"] for item in review] == ["公司是Another Corp"]
+    assert review[0]["metadata"]["conflict_status"] == "needs_review"
+    assert review[0]["metadata"]["review_status"] == "pending"
+
+    search = client.post(
+        "/search",
+        headers=auth_headers,
+        json={"query": "公司", "user_id": "user-a"},
+    )
+    assert search.status_code == 200, search.text
+    assert [item["memory"] for item in search.json()["results"]] == ["公司是Example Corp"]
+
+    review_search = client.post(
+        "/search",
+        headers=auth_headers,
+        json={"query": "Another", "user_id": "user-a", "include_history": True, "filters": {"status": "conflict_review"}},
+    )
+    assert review_search.status_code == 200, review_search.text
+    review_payload = review_search.json()
+    assert [item["memory"] for item in review_payload["results"]] == ["公司是Another Corp"]
+    assert review_payload["results"][0]["status"] == "conflict_review"
+
+
 def test_add_memory_rejects_task_noise_markers(client, auth_headers):
     for text in ("NO_REPLY", "[[reply_to_current]] 已完成实际测试"):
         response = client.post(
@@ -278,6 +387,78 @@ def test_consolidate_removes_time_and_metadata_noise_and_normalizes_tasks(client
     assert not any(text.startswith("Current time:") for text in texts)
     assert not any(text.startswith("[cron:") for text in texts)
     assert not any(text.startswith("Conversation info (untrusted metadata)") for text in texts)
+
+
+def test_consolidate_supersedes_legacy_active_fact_versions(client, auth_headers, backend_module):
+    older = backend_module.MEMORY_BACKEND.add(
+        [{"role": "user", "content": "偏好使用中文沟通"}],
+        user_id="user-a",
+        metadata={
+            "domain": "long_term",
+            "category": "preference",
+            "fact_key": "preference:language",
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    backend_module.cache_memory_record(
+        memory_id=older["id"],
+        text="偏好使用中文沟通",
+        user_id="user-a",
+        run_id=None,
+        agent_id=None,
+        metadata={
+            "domain": "long_term",
+            "category": "preference",
+            "fact_key": "preference:language",
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+        },
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+
+    newer = backend_module.MEMORY_BACKEND.add(
+        [{"role": "user", "content": "偏好使用英文沟通"}],
+        user_id="user-a",
+        metadata={
+            "domain": "long_term",
+            "category": "preference",
+            "fact_key": "preference:language",
+            "status": "active",
+            "valid_from": "2026-02-01T00:00:00+00:00",
+        },
+    )
+    backend_module.cache_memory_record(
+        memory_id=newer["id"],
+        text="偏好使用英文沟通",
+        user_id="user-a",
+        run_id=None,
+        agent_id=None,
+        metadata={
+            "domain": "long_term",
+            "category": "preference",
+            "fact_key": "preference:language",
+            "status": "active",
+            "valid_from": "2026-02-01T00:00:00+00:00",
+        },
+        created_at="2026-02-01T00:00:00+00:00",
+    )
+
+    response = client.post(
+        "/consolidate",
+        headers=auth_headers,
+        json={"dry_run": False, "user_id": "user-a"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["superseded_fact_count"] == 1
+
+    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    assert listed.status_code == 200, listed.text
+    memories = listed.json()["results"]
+    statuses = {item["memory"]: item["metadata"]["status"] for item in memories}
+    assert statuses["偏好使用英文沟通"] == "active"
+    assert statuses["偏好使用中文沟通"] == "superseded"
 
 
 def test_search_uses_cache_path_without_get_all(client, auth_headers, backend_module):

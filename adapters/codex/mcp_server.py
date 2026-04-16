@@ -389,37 +389,64 @@ def memory_store(
         metadata["task_id"] = task_id
 
     if domain == "long_term":
-        entries = _extract_long_term_entries(text, category)
-        if not entries:
-            normalized = _normalize_text(text)
-            if not normalized:
-                raise ValueError("text must not be empty")
-            entries = [{"text": normalized, "category": category}] if category else [{"text": normalized}]
-
-        responses: list[dict[str, Any]] = []
-        results: list[dict[str, Any]] = []
-        for entry in entries:
-            entry_metadata = dict(metadata)
-            entry_category = entry.get("category")
-            if entry_category:
-                entry_metadata["category"] = entry_category
-            response = client.store(
-                text=entry["text"],
+        normalized = _normalize_text(text)
+        if not normalized:
+            raise ValueError("text must not be empty")
+        if category:
+            return client.store(
+                text=normalized,
                 user_id=effective_user_id,
-                metadata=entry_metadata,
+                metadata=metadata,
                 infer=False,
             )
-            responses.append(response)
-            results.extend(response.get("results", []))
-
-        if len(responses) == 1:
-            return responses[0]
-        return {
-            "status": "stored" if results else "skipped",
-            "results": results,
-            "stored_count": len(results),
-            "responses": responses,
-        }
+        if not hasattr(client, "memory_route"):
+            entries = _extract_long_term_entries(text, category)
+            if not entries:
+                entries = [{"text": normalized}]
+            responses: list[dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
+            for entry in entries:
+                entry_metadata = dict(metadata)
+                entry_category = entry.get("category")
+                if entry_category:
+                    entry_metadata["category"] = entry_category
+                response = client.store(
+                    text=entry["text"],
+                    user_id=effective_user_id,
+                    metadata=entry_metadata,
+                    infer=False,
+                )
+                responses.append(response)
+                results.extend(response.get("results", []))
+            if len(responses) == 1:
+                return responses[0]
+            return {
+                "status": "stored" if results else "skipped",
+                "results": results,
+                "stored_count": len(results),
+                "responses": responses,
+            }
+        route_result = client.memory_route(
+            user_id=effective_user_id,
+            message=normalized,
+            agent_id=effective_agent_id,
+            project_id=effective_project_id,
+            assistant_output=None,
+            client_hints={
+                "explicit_long_term": True,
+                "source": "codex",
+            },
+        )
+        if route_result.get("route") == "drop":
+            return route_result
+        return _store_route_result(
+            route_result=route_result,
+            user_id=effective_user_id,
+            agent_id=effective_agent_id,
+            project_id=effective_project_id,
+            message=normalized,
+            assistant_output=None,
+        )
     if domain == "agent":
         return client.store(
             text=text,

@@ -176,6 +176,7 @@ class SearchRequest(BaseModel):
     project_id: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
     limit: int = 10
+    include_history: bool = False
 
 
 class TaskResolutionRequest(BaseModel):
@@ -541,6 +542,149 @@ def govern_memory_text(text: str, metadata: Optional[dict[str, Any]], *, origin:
     }
 
 
+LONG_TERM_FACT_STATUS_ACTIVE = "active"
+LONG_TERM_FACT_STATUS_SUPERSEDED = "superseded"
+LONG_TERM_FACT_STATUS_CONFLICT_REVIEW = "conflict_review"
+LONG_TERM_FACT_STATUSES = {
+    LONG_TERM_FACT_STATUS_ACTIVE,
+    LONG_TERM_FACT_STATUS_SUPERSEDED,
+    LONG_TERM_FACT_STATUS_CONFLICT_REVIEW,
+}
+AUTO_SUPERSEDE_FACT_KEYS = {
+    "user_profile:name",
+    "user_profile:role",
+    "preference:language",
+    "preference:summary_style",
+}
+
+
+def normalize_string_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = [stripped]
+        else:
+            parsed = [stripped]
+    elif isinstance(raw, (list, tuple, set)):
+        parsed = list(raw)
+    else:
+        parsed = [raw]
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        value = normalize_text(str(item or ""))
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return cleaned
+
+
+def normalize_fact_status(raw: Any, *, default: str = LONG_TERM_FACT_STATUS_ACTIVE) -> str:
+    value = normalize_text(str(raw or "")).lower().replace("-", "_").replace(" ", "_")
+    if value in LONG_TERM_FACT_STATUSES:
+        return value
+    return default
+
+
+def is_history_query(query: str) -> bool:
+    normalized = normalize_text(query).lower()
+    if not normalized:
+        return False
+    return bool(
+        re.search(
+            r"(历史|之前|以前|曾经|原来|旧版本|旧记录|history|historical|previous|earlier|former)",
+            normalized,
+            re.I,
+        )
+    )
+
+
+def infer_long_term_fact_key(text: str, metadata: Optional[dict[str, Any]]) -> str:
+    meta = metadata or {}
+    explicit = normalize_text(str(meta.get("fact_key") or ""))
+    if explicit:
+        return explicit
+    normalized = normalize_text(text)
+    lower = normalized.lower()
+    category = str(meta.get("category") or "")
+    if category == "preference":
+        if re.search(r"中文|英文|语言|沟通|language|communicat|chinese|english", lower, re.I):
+            return "preference:language"
+        if re.search(r"总结|风格|简洁|直接|summary|style|concise|direct", lower, re.I):
+            return "preference:summary_style"
+    if category == "user_profile":
+        if re.search(r"姓名|名字|我叫|name|called", lower, re.I):
+            return "user_profile:name"
+        if re.search(r"身份|角色|role|title|ceo|cto|founder|创始人|负责人", lower, re.I):
+            return "user_profile:role"
+    if category == "project_context":
+        if re.search(r"公司|company|corp|inc|llc|集团|团队", lower, re.I):
+            return "project_context:company"
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"{category or 'long_term'}:{digest}"
+
+
+def should_auto_supersede_fact(metadata: Optional[dict[str, Any]]) -> bool:
+    meta = metadata or {}
+    fact_key = normalize_text(str(meta.get("fact_key") or ""))
+    return fact_key in AUTO_SUPERSEDE_FACT_KEYS
+
+
+def build_long_term_fact_metadata(
+    *,
+    text: str,
+    metadata: Optional[dict[str, Any]],
+    created_at: str,
+    status: Optional[str] = None,
+    supersedes: Optional[list[str]] = None,
+    superseded_by: Optional[str] = None,
+    valid_to: Optional[str] = None,
+    conflict_status: Optional[str] = None,
+    review_status: Optional[str] = None,
+    conflicts_with: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    merged = dict(metadata or {})
+    merged["fact_key"] = infer_long_term_fact_key(text, merged)
+    merged["status"] = normalize_fact_status(status or merged.get("status"))
+    merged["valid_from"] = normalize_text(str(merged.get("valid_from") or "")) or created_at
+    merged["supersedes"] = normalize_string_list(supersedes if supersedes is not None else merged.get("supersedes"))
+
+    if merged["status"] == LONG_TERM_FACT_STATUS_ACTIVE:
+        merged.pop("valid_to", None)
+        merged.pop("superseded_by", None)
+        merged.pop("conflict_status", None)
+        merged.pop("review_status", None)
+        merged.pop("conflicts_with", None)
+        return merged
+
+    if merged["status"] == LONG_TERM_FACT_STATUS_SUPERSEDED:
+        merged["valid_to"] = normalize_text(str(valid_to or merged.get("valid_to") or "")) or created_at
+        if superseded_by:
+            merged["superseded_by"] = superseded_by
+        merged.pop("conflict_status", None)
+        merged.pop("review_status", None)
+        merged.pop("conflicts_with", None)
+        return merged
+
+    merged["conflict_status"] = normalize_text(str(conflict_status or merged.get("conflict_status") or "needs_review")) or "needs_review"
+    merged["review_status"] = normalize_text(str(review_status or merged.get("review_status") or "pending")) or "pending"
+    merged["conflicts_with"] = normalize_string_list(conflicts_with if conflicts_with is not None else merged.get("conflicts_with"))
+    merged.pop("superseded_by", None)
+    return merged
+
+
+def long_term_status_from_metadata(metadata: Optional[dict[str, Any]]) -> str:
+    return normalize_fact_status((metadata or {}).get("status"))
+
+
 def find_cached_duplicate_memory_id(
     *,
     text: str,
@@ -609,6 +753,70 @@ def store_memory_with_governance(
         candidate_category = str(governed["memory_kind"])
         if candidate_category in {"user_profile", "preference", "project_rule", "project_context", "architecture_decision"}:
             meta["category"] = candidate_category
+    now = utcnow_iso()
+    fact_action = "stored"
+    fact_status = None
+    fact_key = None
+    superseded_rows: list[dict[str, Any]] = []
+    superseded_memory_ids: list[str] = []
+    conflicts_with: list[str] = []
+
+    if str(meta.get("domain") or "") == "long_term":
+        meta = build_long_term_fact_metadata(text=stored_text, metadata=meta, created_at=now)
+        fact_key = str(meta.get("fact_key") or "")
+        fact_status = str(meta.get("status") or LONG_TERM_FACT_STATUS_ACTIVE)
+        auto_supersede = should_auto_supersede_fact(meta)
+        active_rows = fetch_active_long_term_fact_rows(
+            user_id=user_id,
+            project_id=meta.get("project_id"),
+            fact_key=fact_key,
+            category=str(meta.get("category") or ""),
+        )
+        duplicate_rows = [
+            row
+            for row in active_rows
+            if normalize_text(str(row.get("text") or "")) == normalize_text(stored_text)
+        ]
+        conflicting_rows = [
+            row
+            for row in active_rows
+            if normalize_text(str(row.get("text") or "")) != normalize_text(stored_text)
+        ]
+        if duplicate_rows and auto_supersede and not conflicting_rows:
+            return {
+                "status": "skipped",
+                "reason": "duplicate",
+                "existing_memory_id": str(duplicate_rows[0]["memory_id"]),
+                "results": [],
+                "fact_status": LONG_TERM_FACT_STATUS_ACTIVE,
+                "fact_action": "duplicate",
+                "fact_key": fact_key,
+            }
+        if conflicting_rows:
+            if auto_supersede:
+                superseded_rows = active_rows
+                superseded_memory_ids = [str(row["memory_id"]) for row in active_rows]
+                meta = build_long_term_fact_metadata(
+                    text=stored_text,
+                    metadata=meta,
+                    created_at=now,
+                    status=LONG_TERM_FACT_STATUS_ACTIVE,
+                    supersedes=superseded_memory_ids,
+                )
+                fact_action = "superseded"
+            else:
+                conflicts_with = [str(row["memory_id"]) for row in conflicting_rows]
+                meta = build_long_term_fact_metadata(
+                    text=stored_text,
+                    metadata=meta,
+                    created_at=now,
+                    status=LONG_TERM_FACT_STATUS_CONFLICT_REVIEW,
+                    conflicts_with=conflicts_with,
+                    conflict_status="needs_review",
+                    review_status="pending",
+                )
+                fact_action = "review_required"
+            fact_status = str(meta.get("status") or LONG_TERM_FACT_STATUS_ACTIVE)
 
     if infer:
         result = backend.add(
@@ -628,23 +836,28 @@ def store_memory_with_governance(
                 run_id=run_id,
                 agent_id=agent_id,
                 metadata=meta,
+                created_at=now,
             )
+            if superseded_rows:
+                try:
+                    archive_active_long_term_facts(superseded_rows, superseded_by=memory_id, archived_at=now)
+                except Exception:
+                    backend.delete(memory_id=memory_id)
+                    delete_cached_memory(memory_id)
+                    raise
         if governed.get("canonicalized"):
             result["status"] = "stored"
             result["canonicalized_from"] = raw_text
         result["judge"] = "llm" if governed.get("from_llm") else "heuristic"
+        if fact_status:
+            result["fact_status"] = fact_status
+            result["fact_action"] = fact_action
+            result["fact_key"] = fact_key
+        if superseded_memory_ids:
+            result["superseded_memory_ids"] = superseded_memory_ids
+        if conflicts_with:
+            result["conflicts_with"] = conflicts_with
         return result
-
-    if str(meta.get("domain") or "") == "long_term" and str(meta.get("category") or "") == "preference":
-        duplicate_id = find_cached_duplicate_memory_id(
-            text=stored_text,
-            user_id=user_id,
-            run_id=run_id,
-            agent_id=agent_id,
-            metadata=meta,
-        )
-        if duplicate_id:
-            return {"status": "skipped", "reason": "duplicate", "existing_memory_id": duplicate_id, "results": []}
 
     result = backend.add(
         messages=[{"role": "user", "content": stored_text}],
@@ -663,11 +876,27 @@ def store_memory_with_governance(
             run_id=run_id,
             agent_id=agent_id,
             metadata=meta,
+            created_at=now,
         )
+        if superseded_rows:
+            try:
+                archive_active_long_term_facts(superseded_rows, superseded_by=memory_id, archived_at=now)
+            except Exception:
+                backend.delete(memory_id=memory_id)
+                delete_cached_memory(memory_id)
+                raise
     if governed.get("canonicalized"):
         result["status"] = "stored"
         result["canonicalized_from"] = raw_text
     result["judge"] = "llm" if governed.get("from_llm") else "heuristic"
+    if fact_status:
+        result["fact_status"] = fact_status
+        result["fact_action"] = fact_action
+        result["fact_key"] = fact_key
+    if superseded_memory_ids:
+        result["superseded_memory_ids"] = superseded_memory_ids
+    if conflicts_with:
+        result["conflicts_with"] = conflicts_with
     return result
 
 
@@ -1440,14 +1669,33 @@ def ensure_task_db() -> None:
                 category TEXT,
                 project_id TEXT,
                 task_id TEXT,
+                fact_key TEXT,
+                fact_status TEXT NOT NULL DEFAULT 'active',
+                valid_from TEXT,
+                valid_to TEXT,
+                supersedes_json TEXT NOT NULL DEFAULT '[]',
+                superseded_by TEXT,
+                conflict_status TEXT,
+                review_status TEXT,
                 text TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
         )
+        add_column_if_missing(conn, "memory_cache", "fact_key", "TEXT")
+        add_column_if_missing(conn, "memory_cache", "fact_status", "TEXT NOT NULL DEFAULT 'active'")
+        add_column_if_missing(conn, "memory_cache", "valid_from", "TEXT")
+        add_column_if_missing(conn, "memory_cache", "valid_to", "TEXT")
+        add_column_if_missing(conn, "memory_cache", "supersedes_json", "TEXT NOT NULL DEFAULT '[]'")
+        add_column_if_missing(conn, "memory_cache", "superseded_by", "TEXT")
+        add_column_if_missing(conn, "memory_cache", "conflict_status", "TEXT")
+        add_column_if_missing(conn, "memory_cache", "review_status", "TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_cache_scope ON memory_cache(user_id, domain, project_id, category)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_cache_fact_scope ON memory_cache(user_id, domain, project_id, fact_key, fact_status)"
         )
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS memory_cache_fts USING fts5(text, content='memory_cache', content_rowid='rowid')"
@@ -1891,15 +2139,24 @@ def cache_memory_record(
 ) -> None:
     ensure_task_db()
     now = created_at or utcnow_iso()
-    meta = metadata or {}
+    meta = dict(metadata or {})
+    if str(meta.get("domain") or "") == "long_term":
+        meta = build_long_term_fact_metadata(
+            text=text,
+            metadata=meta,
+            created_at=normalize_text(str(meta.get("valid_from") or "")) or now,
+            status=str(meta.get("status") or LONG_TERM_FACT_STATUS_ACTIVE),
+        )
     with sqlite3.connect(TASK_DB_PATH) as conn:
         conn.execute(
             """
             INSERT INTO memory_cache (
                 memory_id, user_id, run_id, agent_id, source_agent, domain, category,
-                project_id, task_id, text, created_at, updated_at
+                project_id, task_id, fact_key, fact_status, valid_from, valid_to,
+                supersedes_json, superseded_by, conflict_status, review_status,
+                text, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(memory_id) DO UPDATE SET
                 user_id = excluded.user_id,
                 run_id = excluded.run_id,
@@ -1909,6 +2166,14 @@ def cache_memory_record(
                 category = excluded.category,
                 project_id = excluded.project_id,
                 task_id = excluded.task_id,
+                fact_key = excluded.fact_key,
+                fact_status = excluded.fact_status,
+                valid_from = excluded.valid_from,
+                valid_to = excluded.valid_to,
+                supersedes_json = excluded.supersedes_json,
+                superseded_by = excluded.superseded_by,
+                conflict_status = excluded.conflict_status,
+                review_status = excluded.review_status,
                 text = excluded.text,
                 updated_at = excluded.updated_at
             """,
@@ -1922,6 +2187,14 @@ def cache_memory_record(
                 meta.get("category"),
                 meta.get("project_id"),
                 meta.get("task_id"),
+                meta.get("fact_key"),
+                normalize_fact_status(meta.get("status")),
+                meta.get("valid_from"),
+                meta.get("valid_to"),
+                json.dumps(normalize_string_list(meta.get("supersedes")), ensure_ascii=False),
+                meta.get("superseded_by"),
+                meta.get("conflict_status"),
+                meta.get("review_status"),
                 text,
                 now,
                 now,
@@ -1988,6 +2261,150 @@ def rebuild_memory_cache(*, user_id: Optional[str], run_id: Optional[str], agent
     return count
 
 
+def build_metadata_from_cache_row(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = {
+        "domain": row.get("domain"),
+        "category": row.get("category"),
+        "project_id": row.get("project_id") or None,
+        "task_id": row.get("task_id") or None,
+        "source_agent": row.get("source_agent") or None,
+    }
+    if row.get("fact_key"):
+        metadata["fact_key"] = row.get("fact_key")
+    if row.get("fact_status"):
+        metadata["status"] = normalize_fact_status(row.get("fact_status"))
+    if row.get("valid_from"):
+        metadata["valid_from"] = row.get("valid_from")
+    if row.get("valid_to"):
+        metadata["valid_to"] = row.get("valid_to")
+    supersedes = normalize_string_list(row.get("supersedes_json"))
+    if supersedes:
+        metadata["supersedes"] = supersedes
+    if row.get("superseded_by"):
+        metadata["superseded_by"] = row.get("superseded_by")
+    if row.get("conflict_status"):
+        metadata["conflict_status"] = row.get("conflict_status")
+    if row.get("review_status"):
+        metadata["review_status"] = row.get("review_status")
+    return metadata
+
+
+def load_long_term_cache_rows(*, user_id: Optional[str], project_id: Optional[str]) -> list[dict[str, Any]]:
+    ensure_task_db()
+    query = """
+        SELECT memory_id, user_id, run_id, agent_id, source_agent, domain, category,
+               project_id, task_id, fact_key, fact_status, valid_from, valid_to,
+               supersedes_json, superseded_by, conflict_status, review_status,
+               text, created_at, updated_at
+        FROM memory_cache
+        WHERE domain = 'long_term'
+    """
+    params: list[Any] = []
+    if user_id is not None:
+        query += " AND user_id = ?"
+        params.append(user_id)
+    if project_id is not None:
+        query += " AND project_id IS ?"
+        params.append(project_id)
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def fetch_active_long_term_fact_rows(
+    *,
+    user_id: Optional[str],
+    project_id: Optional[str],
+    fact_key: str,
+    category: Optional[str],
+) -> list[dict[str, Any]]:
+    ensure_task_db()
+    query = """
+        SELECT memory_id, user_id, run_id, agent_id, source_agent, domain, category,
+               project_id, task_id, fact_key, fact_status, valid_from, valid_to,
+               supersedes_json, superseded_by, conflict_status, review_status,
+               text, created_at, updated_at
+        FROM memory_cache
+        WHERE domain = 'long_term'
+          AND fact_key = ?
+          AND fact_status = ?
+    """
+    params: list[Any] = [fact_key, LONG_TERM_FACT_STATUS_ACTIVE]
+    if user_id is not None:
+        query += " AND user_id = ?"
+        params.append(user_id)
+    if project_id is not None:
+        query += " AND project_id IS ?"
+        params.append(project_id)
+    if category:
+        query += " AND category = ?"
+        params.append(category)
+    with sqlite3.connect(TASK_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def archive_active_long_term_facts(
+    rows: list[dict[str, Any]],
+    *,
+    superseded_by: str,
+    archived_at: str,
+) -> list[str]:
+    backend = get_memory_backend()
+    archived_history_ids: list[str] = []
+    for row in rows:
+        memory_id = str(row.get("memory_id") or "")
+        if not memory_id:
+            continue
+        item = backend.get(memory_id)
+        if not isinstance(item, dict):
+            delete_cached_memory(memory_id)
+            continue
+        text = str(item.get("memory") or item.get("text") or row.get("text") or "")
+        if not text:
+            delete_cached_memory(memory_id)
+            backend.delete(memory_id=memory_id)
+            continue
+        base_metadata = {
+            **build_metadata_from_cache_row(row),
+            **dict(item.get("metadata") or {}),
+        }
+        archived_metadata = build_long_term_fact_metadata(
+            text=text,
+            metadata=base_metadata,
+            created_at=normalize_text(str(base_metadata.get("valid_from") or row.get("created_at") or archived_at)) or archived_at,
+            status=LONG_TERM_FACT_STATUS_SUPERSEDED,
+            superseded_by=superseded_by,
+            valid_to=archived_at,
+        )
+        archived = backend.add(
+            messages=[{"role": "user", "content": text}],
+            user_id=item.get("user_id") or row.get("user_id"),
+            run_id=item.get("run_id") or row.get("run_id"),
+            agent_id=item.get("agent_id") or row.get("agent_id"),
+            metadata=archived_metadata,
+            infer=False,
+        )
+        archived_id = extract_memory_id(archived)
+        if not archived_id:
+            raise RuntimeError(f"Failed to archive superseded fact {memory_id}")
+        cache_memory_record(
+            memory_id=archived_id,
+            text=text,
+            user_id=item.get("user_id") or row.get("user_id"),
+            run_id=item.get("run_id") or row.get("run_id"),
+            agent_id=item.get("agent_id") or row.get("agent_id"),
+            metadata=archived_metadata,
+            created_at=str(row.get("created_at") or archived_at),
+        )
+        backend.delete(memory_id=memory_id)
+        delete_cached_memory(memory_id)
+        archived_history_ids.append(archived_id)
+    return archived_history_ids
+
+
 def lexical_score(query: str, text: str) -> float:
     query_tokens = task_tokens(query)
     text_tokens = task_tokens(text)
@@ -2036,11 +2453,13 @@ def matched_filter_fields(item: dict[str, Any], filters: Optional[dict[str, Any]
         return set()
     metadata = item.get("metadata") or {}
     matched: set[str] = set()
-    for field in ("project_id", "category", "domain", "task_id", "source_agent"):
+    for field in ("project_id", "category", "domain", "task_id", "source_agent", "status"):
         expected = filters.get(field)
         if expected is None:
             continue
         actual = metadata.get(field)
+        if field == "status" and str(metadata.get("domain") or "") == "long_term":
+            actual = long_term_status_from_metadata(metadata)
         if normalize_text(str(actual or "")) == normalize_text(str(expected)):
             matched.add(field)
     return matched
@@ -2063,7 +2482,8 @@ def merge_search_candidate(
         existing["_matched_by"] = set()
         existing["_matched_fields"] = set()
         existing["_matched_terms"] = set()
-        existing["_status"] = "active"
+        metadata = existing.get("metadata") or {}
+        existing["_status"] = long_term_status_from_metadata(metadata) if str(metadata.get("domain") or "") == "long_term" else "active"
         by_id[item_id] = existing
     else:
         existing["score"] = max(float(existing.get("score", 0.0)), float(item.get("score", 0.0)))
@@ -2084,12 +2504,20 @@ def finalize_search_result(item: dict[str, Any]) -> dict[str, Any]:
     result["matched_by"] = matched_by
     result["matched_fields"] = matched_fields
     result["status"] = status
+    metadata = result.get("metadata") or {}
     result["explainability"] = {
         "matched_by": matched_by,
         "matched_fields": matched_fields,
         "matched_terms": matched_terms,
         "source_memory_id": result.get("id"),
         "status": status,
+        "fact_key": metadata.get("fact_key"),
+        "valid_from": metadata.get("valid_from"),
+        "valid_to": metadata.get("valid_to"),
+        "supersedes": metadata.get("supersedes") or [],
+        "superseded_by": metadata.get("superseded_by"),
+        "conflict_status": metadata.get("conflict_status"),
+        "review_status": metadata.get("review_status"),
     }
     return result
 
@@ -2219,11 +2647,16 @@ def hybrid_search(
     agent_id: Optional[str],
     filters: Optional[dict[str, Any]],
     limit: int = 10,
+    include_history: bool = False,
 ) -> dict[str, Any]:
     backend = get_memory_backend()
     profile = classify_query_intent(query, filters)
     vector_query = build_vector_query(query, profile)
     effective_filters = dict(filters or {})
+    history_mode = include_history or is_history_query(query)
+    requested_status = normalize_fact_status(effective_filters.get("status"), default="") if effective_filters.get("status") else ""
+    if requested_status and requested_status != LONG_TERM_FACT_STATUS_ACTIVE:
+        history_mode = True
     if profile.get("effective_domain") and not effective_filters.get("domain"):
         effective_filters["domain"] = profile["effective_domain"]
     params = {
@@ -2238,6 +2671,7 @@ def hybrid_search(
         candidates = []
         for item in raw_candidates:
             metadata = item.get("metadata") or {}
+            item_status = long_term_status_from_metadata(metadata) if str(metadata.get("domain") or "") == "long_term" else "active"
             if effective_filters.get("project_id") and normalize_text(str(metadata.get("project_id") or "")) != normalize_text(
                 str(effective_filters["project_id"])
             ):
@@ -2246,6 +2680,11 @@ def hybrid_search(
                 continue
             if effective_filters.get("domain") and str(metadata.get("domain") or "") != str(effective_filters["domain"]):
                 continue
+            if str(metadata.get("domain") or "") == "long_term":
+                if requested_status and item_status != requested_status:
+                    continue
+                if not requested_status and not history_mode and item_status != LONG_TERM_FACT_STATUS_ACTIVE:
+                    continue
             candidates.append(item)
         mode = "hybrid"
     else:
@@ -2287,7 +2726,15 @@ def hybrid_search(
                     'category', c.category,
                     'project_id', c.project_id,
                     'task_id', c.task_id,
-                    'source_agent', c.source_agent
+                    'source_agent', c.source_agent,
+                    'fact_key', c.fact_key,
+                    'status', c.fact_status,
+                    'valid_from', c.valid_from,
+                    'valid_to', c.valid_to,
+                    'supersedes', json(c.supersedes_json),
+                    'superseded_by', c.superseded_by,
+                    'conflict_status', c.conflict_status,
+                    'review_status', c.review_status
                 ) AS metadata_json
             FROM memory_cache c
             WHERE 1=1
@@ -2312,6 +2759,12 @@ def hybrid_search(
             if effective_filters.get("domain"):
                 sql += " AND c.domain = ?"
                 sql_params.append(effective_filters["domain"])
+            if requested_status:
+                sql += " AND c.fact_status = ?"
+                sql_params.append(requested_status)
+            elif not history_mode:
+                sql += " AND (c.domain != 'long_term' OR c.fact_status = ?)"
+                sql_params.append(LONG_TERM_FACT_STATUS_ACTIVE)
         variant_clauses: list[str] = []
         variant_params: list[Any] = []
         if match_query:
@@ -2436,6 +2889,8 @@ def hybrid_search(
         task_id = str(metadata.get("task_id") or "")
         if task_id and task_id in task_context:
             item["_status"] = task_context[task_id]["status"]
+        elif str(metadata.get("domain") or "") == "long_term":
+            item["_status"] = long_term_status_from_metadata(metadata)
         else:
             item["_status"] = "active"
     reranked = rerank_results(query, list(by_id.values()), profile=profile, top_k=max(1, min(limit, 50)))
@@ -2458,6 +2913,7 @@ def hybrid_search(
             "mode": mode,
             "intent": profile["intent"],
             "effective_domain": profile["effective_domain"],
+            "history_mode": history_mode,
             "hybrid_sources": source_counts,
         },
     }
@@ -3032,6 +3488,11 @@ def add_memory(payload: MemoryCreate, auth: dict[str, Any] = Depends(verify_api_
             "infer": payload.infer,
             "status": result.get("status", "stored"),
             "reason": result.get("reason"),
+            "fact_status": result.get("fact_status"),
+            "fact_action": result.get("fact_action"),
+            "fact_key": result.get("fact_key"),
+            "superseded_memory_ids": result.get("superseded_memory_ids") or [],
+            "conflicts_with": result.get("conflicts_with") or [],
         },
     )
     return result
@@ -3088,6 +3549,7 @@ def search_memories(payload: SearchRequest, auth: dict[str, Any] = Depends(verif
         agent_id=payload.agent_id,
         filters=payload.filters,
         limit=payload.limit,
+        include_history=payload.include_history,
     )
     write_audit(
         actor_type=auth["actor_type"],
@@ -3466,6 +3928,7 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
     noise_memory_ids: list[str] = []
     rewrite_rows: list[dict[str, Any]] = []
     canonicalized_long_term_count = 0
+    superseded_fact_count = 0
     task_normalize_result = {
         "scanned_tasks": 0,
         "updated_titles": 0,
@@ -3497,7 +3960,8 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         query = """
             SELECT memory_id, user_id, run_id, agent_id, source_agent, domain, category,
                    COALESCE(project_id, '') AS project_id, COALESCE(task_id, '') AS task_id,
-                   text, created_at
+                   fact_key, fact_status, valid_from, valid_to, supersedes_json, superseded_by,
+                   conflict_status, review_status, text, created_at
             FROM memory_cache
             WHERE 1=1
         """
@@ -3512,13 +3976,7 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
     long_term_groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         item = dict(row)
-        metadata = {
-            "domain": item.get("domain"),
-            "category": item.get("category"),
-            "project_id": item.get("project_id") or None,
-            "task_id": item.get("task_id") or None,
-            "source_agent": item.get("source_agent") or None,
-        }
+        metadata = build_metadata_from_cache_row(item)
         origin = "consolidate" if should_run_offline_judge(text=str(item.get("text") or ""), metadata=metadata) else "memory_store"
         governed = govern_memory_text(str(item.get("text") or ""), metadata, origin=origin)
         item["governed"] = governed
@@ -3532,6 +3990,12 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         if item.get("domain") != "long_term":
             continue
         item["canonical_text"] = str(governed["text"])
+        item["fact_metadata"] = build_long_term_fact_metadata(
+            text=item["canonical_text"],
+            metadata=metadata,
+            created_at=str(item.get("created_at") or utcnow_iso()),
+            status=str(metadata.get("status") or LONG_TERM_FACT_STATUS_ACTIVE),
+        )
         key = build_long_term_duplicate_key(item)
         long_term_groups.setdefault(key, []).append(item)
 
@@ -3565,13 +4029,7 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
             original_memory_id = str(row["memory_id"])
             if original_memory_id in duplicate_id_set:
                 continue
-            metadata = {
-                "domain": row.get("domain"),
-                "category": row.get("category"),
-                "project_id": row.get("project_id") or None,
-                "task_id": row.get("task_id") or None,
-                "source_agent": row.get("source_agent") or None,
-            }
+            metadata = row.get("fact_metadata") or build_metadata_from_cache_row(row)
             try:
                 rewritten = get_memory_backend().add(
                     messages=[{"role": "user", "content": str(row["canonical_text"])}],
@@ -3602,12 +4060,58 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
         for memory_id in duplicate_memory_ids:
             get_memory_backend().delete(memory_id=memory_id)
             delete_cached_memory(memory_id)
+
+    active_fact_rows = load_long_term_cache_rows(user_id=payload.user_id, project_id=payload.project_id)
+    fact_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for item in active_fact_rows:
+        fact_metadata = build_long_term_fact_metadata(
+            text=str(item.get("text") or ""),
+            metadata=build_metadata_from_cache_row(item),
+            created_at=str(item.get("created_at") or utcnow_iso()),
+            status=str(item.get("fact_status") or LONG_TERM_FACT_STATUS_ACTIVE),
+        )
+        if long_term_status_from_metadata(fact_metadata) != LONG_TERM_FACT_STATUS_ACTIVE:
+            continue
+        item["fact_metadata"] = fact_metadata
+        fact_groups.setdefault(
+            (
+                str(item.get("user_id") or ""),
+                str(item.get("project_id") or ""),
+                str(fact_metadata.get("fact_key") or ""),
+            ),
+            [],
+        ).append(item)
+
+    legacy_supersessions: list[tuple[list[dict[str, Any]], str]] = []
+    for group in fact_groups.values():
+        if len(group) <= 1:
+            continue
+        if not should_auto_supersede_fact(group[0].get("fact_metadata")):
+            continue
+        ordered = sorted(
+            group,
+            key=lambda item: (
+                str((item.get("fact_metadata") or {}).get("valid_from") or item.get("created_at") or ""),
+                str(item.get("memory_id") or ""),
+            ),
+        )
+        newest = ordered[-1]
+        older = ordered[:-1]
+        superseded_fact_count += len(older)
+        if older:
+            legacy_supersessions.append((older, str(newest.get("memory_id") or "")))
+
+    if not payload.dry_run:
+        for older_rows, newest_id in legacy_supersessions:
+            archive_active_long_term_facts(older_rows, superseded_by=newest_id, archived_at=utcnow_iso())
+
     archived_tasks_count = task_normalize_result["archived_tasks"] + closed_tasks_archived
     result = {
         "dry_run": payload.dry_run,
         "rebuilt_cache_count": rebuilt_cache_count,
         "duplicate_long_term_count": len(duplicate_memory_ids),
         "canonicalized_long_term_count": canonicalized_long_term_count,
+        "superseded_fact_count": superseded_fact_count,
         "deleted_noise_count": len(noise_memory_ids),
         "archived_tasks_count": archived_tasks_count,
         "normalized_tasks_count": task_normalize_result["changed_tasks"],
