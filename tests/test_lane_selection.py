@@ -6,9 +6,17 @@ import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
+VALIDATION_PATH = (
+    REPO_ROOT / ".planning/phases/10-test-harness-and-lane-foundation/10-VALIDATION.md"
+)
 PHASE_10_LIVE_SLOW_SUITES = (
     REPO_ROOT / "tests/test_harness_foundation_live.py",
     REPO_ROOT / "tests/test_runtime_entrypoints_live.py",
+)
+FAST_LANE_COMMAND = 'uv run pytest -m "not slow"'
+SLOW_LANE_COMMAND = (
+    "uv run pytest -m slow "
+    "tests/test_harness_foundation_live.py tests/test_runtime_entrypoints_live.py"
 )
 
 
@@ -39,3 +47,9 @@ def test_phase_10_live_suites_are_marked_slow_and_serial() -> None:
         text = suite_path.read_text(encoding="utf-8")
         assert "pytest.mark.slow" in text, suite_path.name
         assert "pytest.mark.serial" in text, suite_path.name
+
+
+def test_phase_10_validation_documents_fast_and_slow_lane_commands() -> None:
+    validation = VALIDATION_PATH.read_text(encoding="utf-8")
+    assert FAST_LANE_COMMAND in validation
+    assert SLOW_LANE_COMMAND in validation

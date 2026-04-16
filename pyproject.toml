@@ -21,8 +21,16 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q --strict-markers"
 testpaths = ["tests"]
+markers = [
+  "slow: slow live-process regression suites kept out of the default fast lane",
+  "serial: tests that own shared runtime resources and should not overlap",
+]
+
+[tool.coverage.run]
+parallel = true
+patch = ["subprocess"]
 
 [build-system]
 requires = ["setuptools>=68"]
