@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from backend.governance.task_policy import classify_task_kind, should_materialize_task
+
 
 def _task_ids(client, auth_headers, *, user_id: str, status: str) -> set[str]:
     response = client.get(
@@ -183,3 +185,85 @@ def test_metrics_expose_task_kind_and_memory_domain_breakdown(client, auth_heade
     assert payload["tasks"]["by_kind"]["system"] >= 1
     assert payload["memory_cache"]["by_domain"]["long_term"] >= 1
     assert payload["memory_cache"]["by_domain"]["task"] >= 1
+
+
+@pytest.mark.parametrize(
+    ("task_id", "title", "last_summary", "source_agent", "project_id", "expected_kind"),
+    [
+        (
+            "task_cron-12345-watchdog",
+            "[cron:12345 Mac OpenCode orphan watchdog (8h)] NO_REPLY",
+            "NO_REPLY",
+            "openclaw-ring",
+            None,
+            "system",
+        ),
+        (
+            "task_question-next-step",
+            "共享记忆系统这个任务的下一步是什么",
+            "共享记忆系统这个任务的下一步是什么",
+            "codex",
+            None,
+            "meta",
+        ),
+        (
+            "task_daily_snapshot",
+            "daily monitoring task snapshot",
+            "updated dashboard snapshot",
+            "codex",
+            None,
+            "snapshot",
+        ),
+        (
+            "task_real_work",
+            "优化共享记忆管理界面",
+            "完成了第一轮信息架构收敛。",
+            "codex",
+            "automem-demo",
+            "work",
+        ),
+    ],
+)
+def test_classify_task_kind_covers_system_meta_snapshot_and_work(
+    task_id: str,
+    title: str,
+    last_summary: str,
+    source_agent: str,
+    project_id: str | None,
+    expected_kind: str,
+):
+    assert (
+        classify_task_kind(
+            task_id=task_id,
+            title=title,
+            last_summary=last_summary,
+            source_agent=source_agent,
+            project_id=project_id,
+        )
+        == expected_kind
+    )
+
+
+@pytest.mark.parametrize(
+    ("task_kind", "title", "last_summary", "expected"),
+    [
+        ("work", "优化共享记忆管理界面", "完成了第一轮信息架构收敛。", True),
+        ("meta", "共享记忆系统这个任务的下一步是什么", "共享记忆系统这个任务的下一步是什么", False),
+        ("system", "[cron] daily monitor", "NO_REPLY", False),
+        ("work", "", "", False),
+    ],
+)
+def test_should_materialize_task_respects_kind_and_content(
+    task_kind: str,
+    title: str,
+    last_summary: str,
+    expected: bool,
+):
+    assert (
+        should_materialize_task(
+            task_kind=task_kind,
+            title=title,
+            last_summary=last_summary,
+        )
+        is expected
+    )
