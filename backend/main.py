@@ -1166,6 +1166,96 @@ LONG_TERM_PROJECT_CATEGORIES = {"project_context", "project_rule", "architecture
 TASK_CATEGORIES = {"handoff", "progress", "blocker", "next_action"}
 
 
+def _looks_project_current_state_text(text: str) -> bool:
+    normalized = normalize_text(text).lower()
+    if not normalized:
+        return False
+    return bool(
+        re.search(
+            r"当前|现在|最近|本周|这周|下一步|接下来|进展|阻塞|handoff|blocker|workflow|正在|联调|执行状态|工作重心|主要在做",
+            normalized,
+            re.I,
+        )
+    )
+
+
+def _looks_stable_or_index_text(text: str) -> bool:
+    normalized = normalize_text(text).lower()
+    if not normalized:
+        return False
+    return bool(
+        re.search(
+            r"^公司是|^项目是|核心目标|长期约束|稳定约束|长期决策|长期边界|项目背景|项目概述|项目地图|识别信息|身份是|姓名是|名字是|偏好使用",
+            normalized,
+            re.I,
+        )
+    )
+
+
+def classify_legacy_memory_scope(
+    *,
+    text: str,
+    metadata: Optional[dict[str, Any]] = None,
+    run_id: Optional[str] = None,
+    clustered_project: bool = False,
+) -> dict[str, str]:
+    meta = metadata or {}
+    category = normalize_text(str(meta.get("category") or "")).lower()
+    domain = normalize_text(str(meta.get("domain") or "")).lower()
+    project_id = normalize_text(str(meta.get("project_id") or ""))
+    task_id = normalize_text(str(meta.get("task_id") or ""))
+    normalized_run_id = normalize_text(str(run_id or ""))
+
+    if project_id:
+        return {"scope": "project", "reason": "hard:project_id"}
+    if task_id or normalized_run_id:
+        return {"scope": "project", "reason": "hard:task_or_run_id"}
+    if domain == "task" or category in TASK_CATEGORIES:
+        return {"scope": "project", "reason": "hard:task_domain"}
+
+    if category in LONG_TERM_USER_CATEGORIES:
+        return {"scope": "user_global", "reason": "semantic:user_category"}
+
+    if category in LONG_TERM_PROJECT_CATEGORIES:
+        if _looks_project_current_state_text(text):
+            return {"scope": "project", "reason": "semantic:project_current_state"}
+        if _looks_stable_or_index_text(text):
+            return {"scope": "user_global", "reason": "semantic:project_index_or_stable_context"}
+
+    if clustered_project and _looks_project_current_state_text(text):
+        return {"scope": "project", "reason": "aux:project_cluster"}
+
+    if _looks_stable_or_index_text(text):
+        return {"scope": "user_global", "reason": "semantic:stable_or_index_text"}
+    if _looks_project_current_state_text(text):
+        return {"scope": "project", "reason": "semantic:current_state_text"}
+
+    return {"scope": "migration_review", "reason": "ambiguous"}
+
+
+def choose_mixed_scope_answer_roles(intent: str) -> dict[str, str]:
+    if intent in {"identity_lookup", "preference_lookup", "company_lookup"}:
+        return {
+            "main_scope": "user_global",
+            "main_role": "cross_project_preferences_and_constraints",
+            "supporting_scope": "project",
+            "supporting_role": "current_project_state",
+        }
+    if intent == "task_lookup":
+        return {
+            "main_scope": "project",
+            "main_role": "current_project_state",
+            "supporting_scope": "user_global",
+            "supporting_role": "cross_project_preferences_and_constraints",
+        }
+    return {
+        "main_scope": "user_global",
+        "main_role": "cross_project_preferences_and_constraints",
+        "supporting_scope": "project",
+        "supporting_role": "current_project_state",
+    }
+
+
 def classify_query_intent(query: str, filters: Optional[dict[str, Any]]) -> dict[str, Any]:
     explicit_domain = (filters or {}).get("domain")
     normalized = normalize_text(query).lower()
