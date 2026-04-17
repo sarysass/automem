@@ -35,7 +35,7 @@ automem v1.0 is shipped, and v1.1 now focuses on proving the shipped control pla
 **Milestone Goal:** Turn existing capability claims into durable regression protection through realistic workflows, orchestration coverage, failure-path tests, and explicit CI lanes.
 
 - [x] **Phase 10: Test Harness And Lane Foundation** - Create the isolated live-process harness and baseline lane structure every deeper regression suite depends on. (completed 2026-04-17)
-- [ ] **Phase 11: Deep-User Workflow And Scope Regression** - Prove core memory, fact, task, and auth flows through named API-first scenarios plus targeted rule backfill.
+- [x] **Phase 11: Deep-User Workflow And Scope Regression** - Prove core memory, fact, task, and auth flows through named API-first scenarios plus targeted rule backfill. (completed 2026-04-17)
 - [ ] **Phase 12: Orchestration And Failure-Recovery Coverage** - Prove queue, worker, scheduler, retry, and degraded-governance behavior across real handoffs and stable failure states.
 - [ ] **Phase 13: Canary And Quality Gates** - Formalize fast/slow governance and milestone-level critical-path checks, including a gated canary lane.
 
@@ -67,10 +67,10 @@ Plans:
   3. Maintainer can verify task lifecycle flows, including materialization, follow-up retrieval, and cleanup side effects, through realistic regression stories.
   4. Maintainer can prove fail-closed single-project, multi-project, and admin boundaries across memory, task, search, close, archive, and forget flows while focused unit tests localize regressions in classification, scope, fact lifecycle, and shared state helpers.
 **Plans**:
-- [ ] `11-01-PLAN.md` — Named deep-user memory and fact workflows, including intent recall, supersede, conflict-review, and truthful explanation assertions.
-- [ ] `11-02-PLAN.md` — Multi-hop task handoff, cleanup, and task-governance rule regression stories.
-- [ ] `11-03-PLAN.md` — Fail-closed authorization and scope matrix across memory and task surfaces, plus focused helper localization.
-- [ ] `11-04-PLAN.md` — Scope-model preparation helpers for legacy classification and mixed-retrieval role decisions without a full API cutover.
+- [x] `11-01-PLAN.md` — Named deep-user memory and fact workflows, including intent recall, supersede, conflict-review, and truthful explanation assertions.
+- [x] `11-02-PLAN.md` — Multi-hop task handoff, cleanup, and task-governance rule regression stories.
+- [x] `11-03-PLAN.md` — Fail-closed authorization and scope matrix across memory and task surfaces, plus focused helper localization.
+- [x] `11-04-PLAN.md` — Scope-model preparation helpers for legacy classification and mixed-retrieval role decisions without a full API cutover.
 
 ### Phase 12: Orchestration And Failure-Recovery Coverage
 **Goal**: Maintainers can prove that background governance behaves correctly from enqueue through completion or safe failure under real worker and scheduler orchestration.
@@ -101,6 +101,6 @@ Phases execute in numeric order: 10 → 11 → 12 → 13
 |-------|----------------|--------|-----------|
 | 01-09 Archived Milestone Work | 15/15 | Complete | 2026-04-16 |
 | 10. Test Harness And Lane Foundation | 4/4 | Complete | 2026-04-17 |
-| 11. Deep-User Workflow And Scope Regression | 0/TBD | Not started | - |
+| 11. Deep-User Workflow And Scope Regression | 4/4 | Complete   | 2026-04-17 |
 | 12. Orchestration And Failure-Recovery Coverage | 0/TBD | Not started | - |
 | 13. Canary And Quality Gates | 0/TBD | Not started | - |
