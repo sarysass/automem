@@ -103,7 +103,11 @@ Plans:
   1. Phase 11 has a `11-VERIFICATION.md` that certifies the completed deep-user, auth, and helper-scope work against the milestone requirements.
   2. Phase 11 summaries expose the requirement completion markers needed for three-source milestone traceability.
   3. Re-running `$gsd-audit-milestone` can mark `E2E-01`, `E2E-02`, `E2E-03`, `AUTH-01`, `AUTH-02`, `UNIT-01`, and `UNIT-02` as satisfied instead of unsatisfied.
-**Plans**: TBD
+**Plans**: 0/2 plans executed
+
+Plans:
+- [ ] `11.1-01-PLAN.md` — Backfill Phase 11 summary frontmatter and exact `requirements-completed` markers from the original Phase 11 plans.
+- [ ] `11.1-02-PLAN.md` — Create `11-VERIFICATION.md`, mark the seven Phase 11 requirements validated, and refresh the milestone audit evidence.
 
 ### Phase 11.2: Phase 10 Nyquist Reconciliation
 **Goal**: Maintainers can make the existing Phase 10 validation artifact accurately reflect the already-shipped green harness evidence so milestone Nyquist status is no longer partial.
@@ -126,7 +130,7 @@ Phases execute in numeric order: 10 → 11 → 11.1 → 11.2 → 12 → 13
 | 01-09 Archived Milestone Work | 15/15 | Complete | 2026-04-16 |
 | 10. Test Harness And Lane Foundation | 4/4 | Complete | 2026-04-17 |
 | 11. Deep-User Workflow And Scope Regression | 4/4 | Complete   | 2026-04-17 |
-| 11.1 Phase 11 Evidence Chain Closure | 0/TBD | Not started | - |
+| 11.1 Phase 11 Evidence Chain Closure | 0/2 | Planned    |  |
 | 11.2 Phase 10 Nyquist Reconciliation | 0/TBD | Not started | - |
 | 12. Orchestration And Failure-Recovery Coverage | 0/TBD | Not started | - |
 | 13. Canary And Quality Gates | 0/TBD | Not started | - |
