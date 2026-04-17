@@ -78,19 +78,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-01 | Phase 10 | Validated |
 | HARN-02 | Phase 10 | Validated |
 | HARN-03 | Phase 10 | Validated |
-| E2E-01 | Phase 11 | Planned |
-| E2E-02 | Phase 11 | Planned |
-| E2E-03 | Phase 11 | Planned |
-| AUTH-01 | Phase 11 | Planned |
-| AUTH-02 | Phase 11 | Planned |
+| E2E-01 | Phase 14 | Pending |
+| E2E-02 | Phase 14 | Pending |
+| E2E-03 | Phase 14 | Pending |
+| AUTH-01 | Phase 14 | Pending |
+| AUTH-02 | Phase 14 | Pending |
 | ORCH-01 | Phase 12 | Planned |
 | ORCH-02 | Phase 12 | Planned |
 | ORCH-03 | Phase 12 | Planned |
 | FAIL-01 | Phase 12 | Planned |
 | FAIL-02 | Phase 12 | Planned |
 | FAIL-03 | Phase 12 | Planned |
-| UNIT-01 | Phase 11 | Planned |
-| UNIT-02 | Phase 11 | Planned |
+| UNIT-01 | Phase 14 | Pending |
+| UNIT-02 | Phase 14 | Pending |
 | UNIT-03 | Phase 12 | Planned |
 | QUAL-01 | Phase 13 | Planned |
 | QUAL-02 | Phase 13 | Planned |
@@ -102,4 +102,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-16*
-*Last updated: 2026-04-17 after verifying Phase 10*
+*Last updated: 2026-04-17 after planning milestone gap-closure phases 14-15*

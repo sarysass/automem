@@ -7,12 +7,12 @@ automem v1.0 is shipped, and v1.1 now focuses on proving the shipped control pla
 ## Milestones
 
 - ✅ **v1.0 milestone** — Phases 01-09 (shipped 2026-04-16)
-- 🚧 **v1.1 Testing Depth & Real-World Regression** — Phases 10-13 (planned)
+- 🚧 **v1.1 Testing Depth & Real-World Regression** — Phases 10-15 (planned)
 
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (10, 11, 12, 13): Planned milestone work
+- Integer phases (10, 11, 12, 13, 14, 15): Planned milestone work
 - Decimal phases (10.1, 10.2): Urgent insertions if needed later
 
 <details>
@@ -38,6 +38,8 @@ automem v1.0 is shipped, and v1.1 now focuses on proving the shipped control pla
 - [x] **Phase 11: Deep-User Workflow And Scope Regression** - Prove core memory, fact, task, and auth flows through named API-first scenarios plus targeted rule backfill. (completed 2026-04-17)
 - [ ] **Phase 12: Orchestration And Failure-Recovery Coverage** - Prove queue, worker, scheduler, retry, and degraded-governance behavior across real handoffs and stable failure states.
 - [ ] **Phase 13: Canary And Quality Gates** - Formalize fast/slow governance and milestone-level critical-path checks, including a gated canary lane.
+- [ ] **Phase 14: Phase 11 Evidence Chain Closure** - Backfill the missing verification and requirement-trace artifacts so the completed deep-user regression work can count in milestone audit.
+- [ ] **Phase 15: Phase 10 Nyquist Reconciliation** - Reconcile the shipped harness phase's validation contract with the actual green evidence so milestone Nyquist coverage becomes compliant.
 
 ## Phase Details
 
@@ -92,10 +94,32 @@ Plans:
   2. Maintainer can assess milestone readiness through named regression stories and critical-path checks instead of a repo-wide coverage percentage alone.
 **Plans**: TBD
 
+### Phase 14: Phase 11 Evidence Chain Closure
+**Goal**: Maintainers can close the milestone-audit evidence gap for the completed deep-user regression work by restoring phase-level verification and summary requirement traceability.
+**Depends on**: Phase 11
+**Requirements**: E2E-01, E2E-02, E2E-03, AUTH-01, AUTH-02, UNIT-01, UNIT-02
+**Gap Closure**: Closes the `v1.1-MILESTONE-AUDIT.md` blockers caused by the missing `11-VERIFICATION.md` and missing summary requirement markers.
+**Success Criteria** (what must be TRUE):
+  1. Phase 11 has a `11-VERIFICATION.md` that certifies the completed deep-user, auth, and helper-scope work against the milestone requirements.
+  2. Phase 11 summaries expose the requirement completion markers needed for three-source milestone traceability.
+  3. Re-running `$gsd-audit-milestone` can mark `E2E-01`, `E2E-02`, `E2E-03`, `AUTH-01`, `AUTH-02`, `UNIT-01`, and `UNIT-02` as satisfied instead of unsatisfied.
+**Plans**: TBD
+
+### Phase 15: Phase 10 Nyquist Reconciliation
+**Goal**: Maintainers can make the existing Phase 10 validation artifact accurately reflect the already-shipped green harness evidence so milestone Nyquist status is no longer partial.
+**Depends on**: Phase 10
+**Requirements**: none — audit and validation closure only
+**Gap Closure**: Closes the `v1.1-MILESTONE-AUDIT.md` Nyquist blocker caused by `10-VALIDATION.md` still reporting draft / pending state.
+**Success Criteria** (what must be TRUE):
+  1. `10-VALIDATION.md` reflects the real Phase 10 coverage with compliant frontmatter and green task rows.
+  2. The current milestone audit no longer classifies Phase 10 as Nyquist-partial.
+  3. Any remaining deferred items stay explicitly documented as tech debt rather than masquerading as open validation gaps.
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 10 → 11 → 12 → 13
+Phases execute in numeric order: 10 → 11 → 12 → 13 → 14 → 15
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -104,3 +128,5 @@ Phases execute in numeric order: 10 → 11 → 12 → 13
 | 11. Deep-User Workflow And Scope Regression | 4/4 | Complete   | 2026-04-17 |
 | 12. Orchestration And Failure-Recovery Coverage | 0/TBD | Not started | - |
 | 13. Canary And Quality Gates | 0/TBD | Not started | - |
+| 14. Phase 11 Evidence Chain Closure | 0/TBD | Not started | - |
+| 15. Phase 10 Nyquist Reconciliation | 0/TBD | Not started | - |
