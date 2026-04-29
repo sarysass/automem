@@ -35,10 +35,19 @@ def test_claude_capture_commits_duplicate_state_only_after_success(tmp_path, mon
         plugin_data_dir=tmp_path,
     )
 
-    def failing_request(*_args, **_kwargs):
+    class _StubClient:
+        def __enter__(self) -> "_StubClient":
+            return self
+
+        def __exit__(self, *_a) -> bool:
+            return False
+
+    monkeypatch.setattr(module, "_http_client", lambda _cfg: _StubClient())
+
+    def failing_capture(*_args, **_kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(module, "_request_json", failing_request)
+    monkeypatch.setattr(module, "_shared_capture_turn", failing_capture)
     try:
         module.capture_turn(
             cfg,
@@ -55,7 +64,7 @@ def test_claude_capture_commits_duplicate_state_only_after_success(tmp_path, mon
 
     assert module.load_capture_state(cfg) == {}
 
-    monkeypatch.setattr(module, "_request_json", lambda *_args, **_kwargs: {"route": "drop"})
+    monkeypatch.setattr(module, "_shared_capture_turn", lambda *_args, **_kwargs: {"route": "drop"})
     first = module.capture_turn(
         cfg,
         message="please fix the regression",

@@ -47,7 +47,7 @@ def load_cli_module():
 def test_agent_key_create_forwards_bound_identity_fields(monkeypatch, capsys):
     module, module_name = load_cli_module()
     dummy_client = DummyClient()
-    monkeypatch.setattr(module, "build_client", lambda: dummy_client)
+    monkeypatch.setattr(module, "build_client", lambda **kwargs: dummy_client)
     monkeypatch.setattr(
         sys,
         "argv",
