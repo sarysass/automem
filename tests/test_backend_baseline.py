@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
+
 import pytest
+
+
+_FRONTEND_INDEX = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"
+_requires_frontend_build = pytest.mark.skipif(
+    not _FRONTEND_INDEX.exists(),
+    reason="frontend/dist/index.html missing — build with `npm --prefix frontend run build`",
+)
 
 
 def add_long_term_memory(client, auth_headers, *, text: str, user_id: str, category: str = "project_context"):
@@ -1762,12 +1771,14 @@ def test_task_listing_rewrites_keyword_soup_titles(client, auth_headers, backend
     assert task["title"] == "待办任务跟进与截止项"
 
 
+@_requires_frontend_build
 def test_ui_index_is_available(client, auth_headers):
     response = client.get("/ui", headers=auth_headers)
     assert response.status_code == 200, response.text
     assert "记忆平台管理台" in response.text
 
 
+@_requires_frontend_build
 def test_ui_route_serves_chinese_management_page(client):
     response = client.get("/ui")
     assert response.status_code == 200, response.text
