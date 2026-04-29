@@ -4,10 +4,8 @@ import hashlib
 import logging
 import os
 import re
-import secrets
 import sqlite3
 import sys
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -22,7 +20,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
-from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -109,7 +106,6 @@ ALLOW_INSECURE_NOAUTH = os.environ.get("AUTOMEM_ALLOW_INSECURE_NOAUTH", "").stri
     "yes",
     "on",
 }
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 CONFIG = {
     "version": "v1.1",
@@ -189,7 +185,6 @@ from backend.storage import (  # noqa: F401, E402
 # Agent key storage (api_keys table) lives in backend.agent_keys.
 from backend.agent_keys import (  # noqa: E402
     create_agent_key,
-    fetch_api_key,
     list_api_keys,
     normalize_project_ids,
     seed_agent_keys,
@@ -209,6 +204,23 @@ from backend.governance_jobs import (  # noqa: E402
     finalize_governance_job,
     list_governance_jobs,
     release_governance_job_for_retry,
+)
+
+# Audit log storage.
+from backend.audit_log import fetch_audit_log, write_audit  # noqa: E402
+
+# HTTP auth + scope/identity enforcement.
+from backend.auth import (  # noqa: E402
+    auth_bootstrap_bypass_enabled,
+    enforce_agent_identity,
+    enforce_payload_project_identity,
+    enforce_project_identity,
+    enforce_user_identity,
+    has_usable_api_keys,
+    merge_project_id_into_filters,
+    merge_project_id_into_metadata,
+    require_scope,
+    verify_api_key,
 )
 
 
@@ -1617,117 +1629,6 @@ def evaluate_task_materialization(
     return True, task_kind, "accepted"
 
 
-def merge_project_id_into_metadata(project_id: Optional[str], metadata: Optional[dict[str, Any]]) -> dict[str, Any]:
-    merged = dict(metadata or {})
-    existing = normalize_text(str(merged.get("project_id") or ""))
-    if project_id and existing and existing != project_id:
-        raise HTTPException(status_code=400, detail="project_id conflicts with metadata.project_id")
-    if project_id:
-        merged["project_id"] = project_id
-    return merged
-
-
-def merge_project_id_into_filters(project_id: Optional[str], filters: Optional[dict[str, Any]]) -> dict[str, Any]:
-    merged = dict(filters or {})
-    existing = normalize_text(str(merged.get("project_id") or ""))
-    if project_id and existing and existing != project_id:
-        raise HTTPException(status_code=400, detail="project_id conflicts with filters.project_id")
-    if project_id:
-        merged["project_id"] = project_id
-    return merged
-
-
-def auth_bootstrap_bypass_enabled() -> bool:
-    return ALLOW_INSECURE_NOAUTH or "PYTEST_CURRENT_TEST" in os.environ
-
-
-def has_usable_api_keys() -> bool:
-    ensure_task_db()
-    with sqlite3.connect(TASK_DB_PATH) as conn:
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM api_keys
-            WHERE status = 'active'
-              AND (
-                COALESCE(user_id, '') != ''
-                OR scopes_json LIKE '%"admin"%'
-              )
-            LIMIT 1
-            """
-        ).fetchone()
-    return row is not None
-
-
-def fetch_audit_log(*, limit: int = 50, event_type: Optional[str] = None) -> list[dict[str, Any]]:
-    ensure_task_db()
-    query = """
-        SELECT event_id, created_at, actor_type, actor_label, actor_agent_id, event_type,
-               user_id, project_id, task_id, route, detail_json
-        FROM audit_log
-    """
-    params: list[Any] = []
-    if event_type:
-        query += " WHERE event_type = ?"
-        params.append(event_type)
-    query += " ORDER BY created_at DESC LIMIT ?"
-    params.append(max(1, min(limit, 200)))
-    with sqlite3.connect(TASK_DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(query, params).fetchall()
-    entries = []
-    for row in rows:
-        item = dict(row)
-        item["detail"] = json.loads(item.pop("detail_json") or "{}")
-        entries.append(item)
-    return entries
-
-
-def touch_api_key(key_id: str) -> None:
-    with sqlite3.connect(TASK_DB_PATH) as conn:
-        conn.execute(
-            "UPDATE api_keys SET last_used_at = ? WHERE key_id = ?",
-            (utcnow_iso(), key_id),
-        )
-        conn.commit()
-
-
-def write_audit(
-    *,
-    actor_type: str,
-    actor_label: Optional[str],
-    actor_agent_id: Optional[str],
-    event_type: str,
-    user_id: Optional[str] = None,
-    project_id: Optional[str] = None,
-    task_id: Optional[str] = None,
-    route: Optional[str] = None,
-    detail: Optional[dict[str, Any]] = None,
-) -> None:
-    ensure_task_db()
-    with sqlite3.connect(TASK_DB_PATH) as conn:
-        conn.execute(
-            """
-            INSERT INTO audit_log (event_id, created_at, actor_type, actor_label, actor_agent_id, event_type, user_id, project_id, task_id, route, detail_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                f"audit_{uuid.uuid4().hex}",
-                utcnow_iso(),
-                actor_type,
-                actor_label,
-                actor_agent_id,
-                event_type,
-                user_id,
-                project_id,
-                task_id,
-                route,
-                json.dumps(detail or {}, ensure_ascii=False),
-            ),
-        )
-        conn.commit()
-
-
 def compute_metrics() -> dict[str, Any]:
     ensure_task_db()
     with sqlite3.connect(TASK_DB_PATH) as conn:
@@ -1928,55 +1829,6 @@ def dispatch_governance_job(
             },
         )
         return released
-
-
-def require_scope(auth: dict[str, Any], scope: str) -> None:
-    if auth.get("is_admin"):
-        return
-    scopes = set(auth.get("scopes") or [])
-    if scope not in scopes and "admin" not in scopes:
-        raise HTTPException(status_code=403, detail=f"Missing required scope: {scope}")
-
-
-def enforce_agent_identity(auth: dict[str, Any], agent_id: Optional[str]) -> Optional[str]:
-    if auth.get("is_admin"):
-        return agent_id
-    key_agent_id = auth.get("agent_id")
-    if agent_id and key_agent_id and agent_id != key_agent_id:
-        raise HTTPException(status_code=403, detail="agent_id does not match API key identity")
-    return key_agent_id or agent_id
-
-
-def enforce_user_identity(auth: dict[str, Any], user_id: Optional[str]) -> Optional[str]:
-    if auth.get("is_admin"):
-        return user_id
-    key_user_id = auth.get("user_id")
-    if not key_user_id:
-        raise HTTPException(status_code=403, detail="API key is not bound to a user_id")
-    if user_id and key_user_id and user_id != key_user_id:
-        raise HTTPException(status_code=403, detail="user_id does not match API key identity")
-    return key_user_id or user_id
-
-
-def enforce_project_identity(auth: dict[str, Any], project_id: Optional[str]) -> Optional[str]:
-    if auth.get("is_admin"):
-        return project_id
-    allowed_project_ids = normalize_project_ids(auth.get("project_ids"))
-    if not allowed_project_ids:
-        return project_id
-    if project_id:
-        if project_id not in allowed_project_ids:
-            raise HTTPException(status_code=403, detail="project_id does not match API key access scope")
-        return project_id
-    if len(allowed_project_ids) == 1:
-        return allowed_project_ids[0]
-    raise HTTPException(status_code=400, detail="project_id is required for API keys bound to multiple projects")
-
-
-def enforce_payload_project_identity(auth: dict[str, Any], payload: Any) -> None:
-    if not hasattr(payload, "project_id"):
-        return
-    payload.project_id = enforce_project_identity(auth, getattr(payload, "project_id"))
 
 
 def ensure_task_row_access(auth: dict[str, Any], row: sqlite3.Row) -> dict[str, Any]:
@@ -3253,36 +3105,6 @@ def resolve_task(payload: TaskResolutionRequest) -> dict[str, Any]:
         "title": title,
         "confidence": 1.0,
         "reason": "Proposed a new task from task-like content",
-    }
-
-
-async def verify_api_key(api_key: Optional[str] = Depends(api_key_header)):
-    if api_key is None:
-        raise HTTPException(status_code=401, detail="X-API-Key header is required")
-    if ADMIN_API_KEY and secrets.compare_digest(api_key, ADMIN_API_KEY):
-        return {
-            "actor_type": "admin",
-            "actor_label": "admin",
-            "agent_id": None,
-            "scopes": ["admin"],
-            "is_admin": True,
-        }
-    key = fetch_api_key(api_key)
-    if not key or key.get("status") != "active":
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    touch_api_key(key["key_id"])
-    scopes = key.get("scopes") or []
-    is_admin = "admin" in scopes
-    if not is_admin and not key.get("user_id"):
-        raise HTTPException(status_code=403, detail="Non-admin API keys must be bound to a user_id")
-    return {
-        "actor_type": "agent_key",
-        "actor_label": key.get("label"),
-        "agent_id": key.get("agent_id"),
-        "user_id": key.get("user_id"),
-        "project_ids": key.get("project_ids") or [],
-        "scopes": scopes,
-        "is_admin": is_admin,
     }
 
 
