@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import re
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from client import AutomemClient
+
+
+@asynccontextmanager
+async def _client_lifespan(_: FastMCP):
+    try:
+        yield {}
+    finally:
+        client.close()
 
 
 mcp = FastMCP(
@@ -16,6 +25,7 @@ mcp = FastMCP(
         "project rules, or task handoff state. Store only durable, reusable "
         "information; do not store chain-of-thought or transient reasoning."
     ),
+    lifespan=_client_lifespan,
 )
 client = AutomemClient()
 

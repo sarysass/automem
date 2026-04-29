@@ -27,6 +27,9 @@ class AutomemClient:
             "top_k": self._config.top_k,
         }
 
+    def close(self) -> None:
+        self._client.close()
+
     def healthz(self) -> dict[str, Any]:
         response = self._client.get("/healthz")
         response.raise_for_status()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import types
@@ -89,7 +90,7 @@ def test_claude_capture_commits_duplicate_state_only_after_success(tmp_path, mon
 def test_codex_memory_store_restores_explicit_long_term_splitting(tmp_path, monkeypatch):
     class DummyFastMCP:
         def __init__(self, *args, **kwargs):
-            pass
+            self.kwargs = kwargs
 
         def tool(self, *args, **kwargs):
             def decorator(func):
@@ -154,3 +155,58 @@ def test_codex_memory_store_restores_explicit_long_term_splitting(tmp_path, monk
         "project_context",
         "preference",
     }
+
+
+def test_codex_lifespan_closes_http_client_on_shutdown(tmp_path, monkeypatch):
+    class DummyFastMCP:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+
+        def tool(self, *args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+        def run(self):
+            return None
+
+    fake_mcp = types.ModuleType("mcp")
+    fake_mcp_server = types.ModuleType("mcp.server")
+    fake_fastmcp = types.ModuleType("mcp.server.fastmcp")
+    fake_fastmcp.FastMCP = DummyFastMCP
+    fake_client_module = types.ModuleType("client")
+
+    class DummyClient:
+        def __init__(self) -> None:
+            self.defaults = {
+                "user_id": "default-user",
+                "agent_id": "codex",
+                "project_id": "automem-demo",
+                "search_threshold": 0.3,
+                "top_k": 6,
+            }
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    fake_client_module.AutomemClient = DummyClient
+    monkeypatch.setitem(sys.modules, "mcp", fake_mcp)
+    monkeypatch.setitem(sys.modules, "mcp.server", fake_mcp_server)
+    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fake_fastmcp)
+    monkeypatch.setitem(sys.modules, "client", fake_client_module)
+
+    module = _load_module(
+        f"automem_codex_lifespan_{tmp_path.name}",
+        REPO_ROOT / "adapters" / "codex" / "mcp_server.py",
+    )
+
+    async def exercise_lifespan():
+        async with module._client_lifespan(module.mcp):
+            assert module.client.close_calls == 0
+
+    asyncio.run(exercise_lifespan())
+
+    assert module.mcp.kwargs["lifespan"] is module._client_lifespan
+    assert module.client.close_calls == 1
