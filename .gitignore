@@ -23,6 +23,12 @@ backend/.env
 *.sqlite3
 *.log
 
+# Runtime data (SQLite + Qdrant collections + history) — never commit
+/data/
+
+# Operator-side snapshots / pre-refactor copies kept beside the deployed tree
+/.backup/
+
 # Local GSD planning artifacts
 .planning/codebase/
 .planning/config.json
