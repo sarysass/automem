@@ -6,8 +6,6 @@ import { useSessionStore } from "@/stores/sessionStore";
 const navItems = [
   { to: "/", label: "仪表盘" },
   { to: "/search", label: "记忆检索" },
-  { to: "/tasks", label: "任务列表" },
-  { to: "/maintenance", label: "维护操作" },
 ];
 
 export function AppShell() {

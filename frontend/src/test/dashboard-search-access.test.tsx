@@ -13,7 +13,7 @@ function mockFetch(payload: unknown) {
   });
 }
 
-describe("dashboard and tasks routes", () => {
+describe("dashboard, access, and search routes", () => {
   beforeEach(() => {
     sessionStorage.clear();
     useSessionStore.setState({
@@ -133,72 +133,6 @@ describe("dashboard and tasks routes", () => {
 
     expect(await screen.findByText("正常运行")).toBeInTheDocument();
     expect(screen.getByText("活跃任务")).toBeInTheDocument();
-  });
-
-  it("loads active tasks directly when opening the tasks page", async () => {
-    sessionStorage.setItem("automem-admin-key", "test-admin");
-    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/v1/healthz") {
-        return mockFetch({
-          ok: true,
-          llm_model: "glm-5",
-          embed_model: "nomic-embed-text",
-          qdrant: "127.0.0.1:6333",
-          task_db: "/tmp/tasks.db",
-          metrics: { memory_cache: { entries: 7 } },
-        });
-      }
-      if (url === "/v1/tasks?status=active&limit=50") {
-        return mockFetch({
-          tasks: [
-            {
-              task_id: "task_alpha",
-              title: "Alpha task",
-              display_title: "Alpha display",
-              task_kind: "work",
-              status: "active",
-              project_id: "project-alpha",
-              owner_agent: "agent-alpha",
-              last_summary: "Alpha summary",
-              summary_preview: "Alpha preview",
-            },
-            {
-              task_id: "task_cron",
-              title: "System watchdog",
-              display_title: "System watchdog",
-              task_kind: "system",
-              status: "active",
-              project_id: null,
-              owner_agent: "openclaw-ring",
-              last_summary: "NO_REPLY",
-              summary_preview: null,
-            },
-          ],
-        });
-      }
-      throw new Error(`unexpected fetch: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      <MemoryRouter initialEntries={["/tasks"]}>
-        <App />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/v1/tasks?status=active&limit=50",
-        expect.objectContaining({
-          headers: expect.objectContaining({ "X-API-Key": "test-admin" }),
-        }),
-      );
-    });
-
-    expect(await screen.findByText("Alpha display")).toBeInTheDocument();
-    expect(screen.getByText("Alpha preview")).toBeInTheDocument();
-    expect(screen.queryByText("System watchdog")).not.toBeInTheDocument();
   });
 
   it("defaults search page to long_term domain and category dropdowns", async () => {
