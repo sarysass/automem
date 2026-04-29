@@ -145,7 +145,7 @@ def configure_logging() -> None:
 
 def run_once(client: Any, *, worker_id: str) -> dict[str, Any]:
     response = client.post(
-        "/governance/jobs/run-next",
+        "/v1/governance/jobs/run-next",
         json={
             "worker_id": worker_id,
             "lease_seconds": max(30, int(os.environ.get("AUTOMEM_WORKER_LEASE_SECONDS", "300"))),

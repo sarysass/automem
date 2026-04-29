@@ -61,7 +61,7 @@ def decode_response(response: httpx.Response) -> Any:
 
 def cmd_health(args: argparse.Namespace) -> None:
     with build_client() as client:
-        emit(decode_response(client.get("/healthz")), args.pretty)
+        emit(decode_response(client.get("/v1/healthz")), args.pretty)
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -78,7 +78,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     if filters:
         payload["filters"] = filters
     with build_client() as client:
-        emit(decode_response(client.post("/search", json=payload)), args.pretty)
+        emit(decode_response(client.post("/v1/search", json=payload)), args.pretty)
 
 
 def cmd_route(args: argparse.Namespace) -> None:
@@ -97,7 +97,7 @@ def cmd_route(args: argparse.Namespace) -> None:
         },
     }
     with build_client() as client:
-        emit(decode_response(client.post("/memory-route", json=payload)), args.pretty)
+        emit(decode_response(client.post("/v1/memory-route", json=payload)), args.pretty)
 
 
 def cmd_capture(args: argparse.Namespace) -> None:
@@ -116,7 +116,7 @@ def cmd_capture(args: argparse.Namespace) -> None:
         },
     }
     with build_client() as client:
-        routed = decode_response(client.post("/memory-route", json=route_payload))
+        routed = decode_response(client.post("/v1/memory-route", json=route_payload))
         result: dict[str, Any] = {"route": routed.get("route"), "stored_long_term": [], "stored_task": None}
         if routed.get("route") in {"long_term", "mixed"}:
             entries = routed.get("entries") or routed.get("long_term") or []
@@ -132,7 +132,7 @@ def cmd_capture(args: argparse.Namespace) -> None:
                         "source_agent": args.agent_id,
                     },
                 }
-                result["stored_long_term"].append(decode_response(client.post("/memories", json=store_payload)))
+                result["stored_long_term"].append(decode_response(client.post("/v1/memories", json=store_payload)))
         if routed.get("route") in {"task", "mixed"} and routed.get("task"):
             task = routed["task"]
             summary = task.get("summary") or {}
@@ -151,7 +151,7 @@ def cmd_capture(args: argparse.Namespace) -> None:
                 "session_id": args.session_id,
                 "channel": args.channel,
             }
-            result["stored_task"] = decode_response(client.post("/task-summaries", json=task_payload))
+            result["stored_task"] = decode_response(client.post("/v1/task-summaries", json=task_payload))
         emit(result, args.pretty)
 
 
@@ -166,27 +166,27 @@ def cmd_task_list(args: argparse.Namespace) -> None:
     if args.cursor:
         params["cursor"] = args.cursor
     with build_client() as client:
-        emit(decode_response(client.get("/tasks", params=params)), args.pretty)
+        emit(decode_response(client.get("/v1/tasks", params=params)), args.pretty)
 
 
 def cmd_task_get(args: argparse.Namespace) -> None:
     with build_client() as client:
-        emit(decode_response(client.get(f"/tasks/{args.task_id}")), args.pretty)
+        emit(decode_response(client.get(f"/v1/tasks/{args.task_id}")), args.pretty)
 
 
 def cmd_task_close(args: argparse.Namespace) -> None:
     with build_client() as client:
-        emit(decode_response(client.post(f"/tasks/{args.task_id}/close", json={"reason": args.reason})), args.pretty)
+        emit(decode_response(client.post(f"/v1/tasks/{args.task_id}/close", json={"reason": args.reason})), args.pretty)
 
 
 def cmd_task_archive(args: argparse.Namespace) -> None:
     with build_client() as client:
-        emit(decode_response(client.post(f"/tasks/{args.task_id}/archive", json={"reason": args.reason})), args.pretty)
+        emit(decode_response(client.post(f"/v1/tasks/{args.task_id}/archive", json={"reason": args.reason})), args.pretty)
 
 
 def cmd_metrics(args: argparse.Namespace) -> None:
     with build_client() as client:
-        emit(decode_response(client.get("/metrics")), args.pretty)
+        emit(decode_response(client.get("/v1/metrics")), args.pretty)
 
 
 def cmd_consolidate(args: argparse.Namespace) -> None:
@@ -202,7 +202,7 @@ def cmd_consolidate(args: argparse.Namespace) -> None:
     if args.prune_work_without_memory_archived is not None:
         payload["prune_work_without_memory_archived"] = args.prune_work_without_memory_archived
     with build_client() as client:
-        emit(decode_response(client.post("/consolidate", json=payload)), args.pretty)
+        emit(decode_response(client.post("/v1/consolidate", json=payload)), args.pretty)
 
 
 def cmd_agent_key_create(args: argparse.Namespace) -> None:
@@ -218,7 +218,7 @@ def cmd_agent_key_create(args: argparse.Namespace) -> None:
     if args.token:
         payload["token"] = args.token
     with build_client() as client:
-        emit(decode_response(client.post("/agent-keys", json=payload)), args.pretty)
+        emit(decode_response(client.post("/v1/agent-keys", json=payload)), args.pretty)
 
 
 def cmd_cache_rebuild(args: argparse.Namespace) -> None:
@@ -228,7 +228,7 @@ def cmd_cache_rebuild(args: argparse.Namespace) -> None:
         "run_id": args.run_id,
     }
     with build_client() as client:
-        emit(decode_response(client.post("/cache/rebuild", json=payload)), args.pretty)
+        emit(decode_response(client.post("/v1/cache/rebuild", json=payload)), args.pretty)
 
 
 def build_parser() -> argparse.ArgumentParser:

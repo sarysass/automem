@@ -176,7 +176,7 @@ def run_consolidation(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
     mode = build_mode()
     if mode not in {"inline", "enqueue"}:
         raise RuntimeError(f"Unsupported MEMORY_CONSOLIDATE_MODE: {mode}")
-    path = "/consolidate" if mode == "inline" else "/governance/jobs"
+    path = "/v1/consolidate" if mode == "inline" else "/v1/governance/jobs"
     body = payload if mode == "inline" else build_job_request(payload)
     last_error: RuntimeError | None = None
     for attempt in range(1, attempts + 1):

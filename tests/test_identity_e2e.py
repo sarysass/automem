@@ -11,7 +11,7 @@ def create_project_key(
     agent_id: str = "agent-project-test",
 ):
     response = client.post(
-        "/agent-keys",
+        "/v1/agent-keys",
         headers=auth_headers,
         json={
             "agent_id": agent_id,
@@ -29,7 +29,7 @@ def test_project_bound_task_flow_defaults_single_project_scope(client, auth_head
     token = create_project_key(client, auth_headers, scopes=["task"])
 
     summary = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers={"X-API-Key": token},
         json={
             "user_id": "user-a",
@@ -41,7 +41,7 @@ def test_project_bound_task_flow_defaults_single_project_scope(client, auth_head
     )
     assert summary.status_code == 200, summary.text
 
-    tasks = client.get("/tasks", headers={"X-API-Key": token}, params={"status": "active"})
+    tasks = client.get("/v1/tasks", headers={"X-API-Key": token}, params={"status": "active"})
     assert tasks.status_code == 200, tasks.text
     payload = tasks.json()
     assert payload["tasks"][0]["project_id"] == "project-alpha"
@@ -51,7 +51,7 @@ def test_project_bound_key_rejects_unauthorized_task_project(client, auth_header
     token = create_project_key(client, auth_headers, scopes=["task"], project_ids=["project-alpha"])
 
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers={"X-API-Key": token},
         json={
             "user_id": "user-a",
@@ -75,7 +75,7 @@ def test_multi_project_key_requires_explicit_project_for_task_flow(client, auth_
     )
 
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers={"X-API-Key": token},
         json={
             "user_id": "user-a",
@@ -98,7 +98,7 @@ def test_multi_project_key_requires_explicit_project_for_memory_write(client, au
     )
 
     response = client.post(
-        "/memories",
+        "/v1/memories",
         headers={"X-API-Key": token},
         json={
             "messages": [{"role": "user", "content": "Need explicit project for memory write"}],
@@ -120,7 +120,7 @@ def test_multi_project_key_requires_explicit_project_for_search(client, auth_hea
     )
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers={"X-API-Key": token},
         json={
             "query": "identity",
@@ -140,7 +140,7 @@ def test_multi_project_key_requires_explicit_project_for_task_list(client, auth_
     )
 
     response = client.get(
-        "/tasks",
+        "/v1/tasks",
         headers={"X-API-Key": token},
         params={"user_id": "user-a", "status": "active"},
     )
@@ -149,7 +149,7 @@ def test_multi_project_key_requires_explicit_project_for_task_list(client, auth_
 
 def test_project_bound_memory_search_only_returns_allowed_project(client, auth_headers):
     admin_project_alpha = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Identity roadmap for alpha"}],
@@ -162,7 +162,7 @@ def test_project_bound_memory_search_only_returns_allowed_project(client, auth_h
     assert admin_project_alpha.status_code == 200, admin_project_alpha.text
 
     admin_project_beta = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Identity roadmap for beta"}],
@@ -177,7 +177,7 @@ def test_project_bound_memory_search_only_returns_allowed_project(client, auth_h
     token = create_project_key(client, auth_headers, scopes=["store", "search"], project_ids=["project-alpha"])
 
     scoped_write = client.post(
-        "/memories",
+        "/v1/memories",
         headers={"X-API-Key": token},
         json={
             "messages": [{"role": "user", "content": "Alpha scoped memory write"}],
@@ -188,7 +188,7 @@ def test_project_bound_memory_search_only_returns_allowed_project(client, auth_h
     )
     assert scoped_write.status_code == 200, scoped_write.text
 
-    search = client.post("/search", headers={"X-API-Key": token}, json={"query": "Identity roadmap", "limit": 10})
+    search = client.post("/v1/search", headers={"X-API-Key": token}, json={"query": "Identity roadmap", "limit": 10})
     assert search.status_code == 200, search.text
     memories = [item["memory"] for item in search.json()["results"]]
     assert "Identity roadmap for alpha" in memories
@@ -199,7 +199,7 @@ def test_project_bound_search_rejects_conflicting_project_filter(client, auth_he
     token = create_project_key(client, auth_headers, scopes=["search"], project_ids=["project-alpha"])
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers={"X-API-Key": token},
         json={
             "query": "identity",
@@ -214,7 +214,7 @@ def test_project_bound_key_cannot_fetch_task_from_other_project(client, auth_hea
     alpha_token = create_project_key(client, auth_headers, scopes=["task"], project_ids=["project-alpha"], agent_id="agent-alpha")
 
     created = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -227,7 +227,7 @@ def test_project_bound_key_cannot_fetch_task_from_other_project(client, auth_hea
     )
     assert created.status_code == 200, created.text
 
-    fetched = client.get("/tasks/task_beta_secret", headers={"X-API-Key": alpha_token})
+    fetched = client.get("/v1/tasks/task_beta_secret", headers={"X-API-Key": alpha_token})
     assert fetched.status_code == 404
 
 
@@ -235,7 +235,7 @@ def test_project_bound_key_cannot_close_task_from_other_project(client, auth_hea
     alpha_token = create_project_key(client, auth_headers, scopes=["task"], project_ids=["project-alpha"], agent_id="agent-alpha-close")
 
     created = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -249,7 +249,7 @@ def test_project_bound_key_cannot_close_task_from_other_project(client, auth_hea
     assert created.status_code == 200, created.text
 
     closed = client.post(
-        "/tasks/task_beta_close_blocked/close",
+        "/v1/tasks/task_beta_close_blocked/close",
         headers={"X-API-Key": alpha_token},
         json={"reason": "should fail"},
     )
@@ -260,7 +260,7 @@ def test_project_bound_key_cannot_archive_task_from_other_project(client, auth_h
     alpha_token = create_project_key(client, auth_headers, scopes=["task"], project_ids=["project-alpha"], agent_id="agent-alpha-archive")
 
     created = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -274,7 +274,7 @@ def test_project_bound_key_cannot_archive_task_from_other_project(client, auth_h
     assert created.status_code == 200, created.text
 
     archived = client.post(
-        "/tasks/task_beta_archive_blocked/archive",
+        "/v1/tasks/task_beta_archive_blocked/archive",
         headers={"X-API-Key": alpha_token},
         json={"reason": "should fail"},
     )
@@ -283,7 +283,7 @@ def test_project_bound_key_cannot_archive_task_from_other_project(client, auth_h
 
 def test_project_bound_key_cannot_fetch_memory_from_other_project(client, auth_headers):
     beta_memory = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Beta confidential memory"}],
@@ -297,13 +297,13 @@ def test_project_bound_key_cannot_fetch_memory_from_other_project(client, auth_h
     memory_id = beta_memory.json()["results"][0]["id"]
 
     alpha_token = create_project_key(client, auth_headers, scopes=["search"], project_ids=["project-alpha"], agent_id="agent-alpha-memory")
-    fetched = client.get(f"/memories/{memory_id}", headers={"X-API-Key": alpha_token})
+    fetched = client.get(f"/v1/memories/{memory_id}", headers={"X-API-Key": alpha_token})
     assert fetched.status_code == 404
 
 
 def test_project_bound_key_cannot_delete_memory_from_other_project(client, auth_headers):
     beta_memory = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Beta delete protected memory"}],
@@ -323,16 +323,16 @@ def test_project_bound_key_cannot_delete_memory_from_other_project(client, auth_
         project_ids=["project-alpha"],
         agent_id="agent-alpha-delete",
     )
-    deleted = client.delete(f"/memories/{memory_id}", headers={"X-API-Key": alpha_token})
+    deleted = client.delete(f"/v1/memories/{memory_id}", headers={"X-API-Key": alpha_token})
     assert deleted.status_code == 404
 
-    still_there = client.get(f"/memories/{memory_id}", headers=auth_headers)
+    still_there = client.get(f"/v1/memories/{memory_id}", headers=auth_headers)
     assert still_there.status_code == 200, still_there.text
 
 
 def test_project_bound_get_memories_defaults_to_single_project_scope(client, auth_headers):
     client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Alpha listing memory"}],
@@ -343,7 +343,7 @@ def test_project_bound_get_memories_defaults_to_single_project_scope(client, aut
         },
     )
     client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Beta listing memory"}],
@@ -355,7 +355,7 @@ def test_project_bound_get_memories_defaults_to_single_project_scope(client, aut
     )
 
     alpha_token = create_project_key(client, auth_headers, scopes=["search"], project_ids=["project-alpha"], agent_id="agent-alpha-list")
-    listed = client.get("/memories", headers={"X-API-Key": alpha_token}, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers={"X-API-Key": alpha_token}, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     memories = [item["memory"] for item in listed.json()["results"]]
     assert "Alpha listing memory" in memories
@@ -364,7 +364,7 @@ def test_project_bound_get_memories_defaults_to_single_project_scope(client, aut
 
 def test_admin_can_read_and_mutate_across_projects(client, auth_headers):
     alpha_memory = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Alpha admin memory"}],
@@ -378,7 +378,7 @@ def test_admin_can_read_and_mutate_across_projects(client, auth_headers):
     memory_id = alpha_memory.json()["results"][0]["id"]
 
     beta_task = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -391,16 +391,16 @@ def test_admin_can_read_and_mutate_across_projects(client, auth_headers):
     )
     assert beta_task.status_code == 200, beta_task.text
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a", "project_id": "project-alpha"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a", "project_id": "project-alpha"})
     assert listed.status_code == 200, listed.text
     assert [item["memory"] for item in listed.json()["results"]] == ["Alpha admin memory"]
 
-    fetched = client.get(f"/memories/{memory_id}", headers=auth_headers)
+    fetched = client.get(f"/v1/memories/{memory_id}", headers=auth_headers)
     assert fetched.status_code == 200, fetched.text
     assert fetched.json()["memory"] == "Alpha admin memory"
 
     archived = client.post(
-        "/tasks/task_admin_beta/archive",
+        "/v1/tasks/task_admin_beta/archive",
         headers=auth_headers,
         json={"reason": "admin cleanup"},
     )
@@ -408,7 +408,7 @@ def test_admin_can_read_and_mutate_across_projects(client, auth_headers):
     assert archived.json()["status"] == "archived"
 
     beta_tasks = client.get(
-        "/tasks",
+        "/v1/tasks",
         headers=auth_headers,
         params={"user_id": "user-a", "project_id": "project-beta", "status": "archived"},
     )

@@ -2225,13 +2225,13 @@ def build_runtime_topology() -> dict[str, Any]:
         "api": {
             "role": "hot_path_admission_and_query",
             "hot_path_endpoints": [
-                "/memory-route",
-                "/memories",
-                "/task-resolution",
-                "/task-summaries",
-                "/search",
+                "/v1/memory-route",
+                "/v1/memories",
+                "/v1/task-resolution",
+                "/v1/task-summaries",
+                "/v1/search",
             ],
-            "background_submission_endpoint": "/governance/jobs",
+            "background_submission_endpoint": "/v1/governance/jobs",
             "notes": [
                 "Hot path keeps route, admission, and retrieval synchronous.",
                 "Heavy cleanup and maintenance should be queued for the governance worker.",
@@ -2239,7 +2239,7 @@ def build_runtime_topology() -> dict[str, Any]:
         },
         "worker": {
             "role": "background_governance_executor",
-            "run_next_endpoint": "/governance/jobs/run-next",
+            "run_next_endpoint": "/v1/governance/jobs/run-next",
             "supported_job_types": sorted(SUPPORTED_GOVERNANCE_JOB_TYPES),
             "script_entrypoints": [
                 "scripts/governance_worker.py",
@@ -3998,7 +3998,6 @@ if (FRONTEND_BUILD_DIR / "assets").exists():
     app.mount("/ui/assets", StaticFiles(directory=str(FRONTEND_BUILD_DIR / "assets")), name="ui-assets")
 
 
-@app.get("/ui")
 @app.get("/v1/ui")
 def ui_index():
     index_path = FRONTEND_BUILD_DIR / "index.html"
@@ -4033,7 +4032,6 @@ def ui_index():
     return FileResponse(index_path)
 
 
-@app.get("/healthz")
 @app.get("/v1/healthz")
 def healthz(auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "search")
@@ -4048,14 +4046,12 @@ def healthz(auth: dict[str, Any] = Depends(verify_api_key)):
     }
 
 
-@app.get("/runtime-topology")
 @app.get("/v1/runtime-topology")
 def runtime_topology(auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "metrics")
     return {"runtime": build_runtime_topology(), "metrics": compute_metrics()["governance_jobs"]}
 
 
-@app.post("/memories")
 @app.post("/v1/memories")
 def add_memory(payload: MemoryCreate, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "store")
@@ -4096,7 +4092,6 @@ def add_memory(payload: MemoryCreate, auth: dict[str, Any] = Depends(verify_api_
     return result
 
 
-@app.get("/memories")
 @app.get("/v1/memories")
 def get_memories(
     user_id: Optional[str] = None,
@@ -4123,7 +4118,6 @@ def get_memories(
     return {"results": filtered}
 
 
-@app.get("/memories/{memory_id}")
 @app.get("/v1/memories/{memory_id}")
 def get_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "search")
@@ -4133,7 +4127,6 @@ def get_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     return ensure_memory_item_access(auth, item)
 
 
-@app.post("/search")
 @app.post("/v1/search")
 def search_memories(payload: SearchRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "search")
@@ -4174,7 +4167,6 @@ def search_memories(payload: SearchRequest, auth: dict[str, Any] = Depends(verif
     return result
 
 
-@app.delete("/memories/{memory_id}")
 @app.delete("/v1/memories/{memory_id}")
 def delete_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "forget")
@@ -4196,7 +4188,6 @@ def delete_memory(memory_id: str, auth: dict[str, Any] = Depends(verify_api_key)
     return {"message": "deleted"}
 
 
-@app.post("/task-resolution")
 @app.post("/v1/task-resolution")
 def task_resolution(payload: TaskResolutionRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
@@ -4217,7 +4208,6 @@ def task_resolution(payload: TaskResolutionRequest, auth: dict[str, Any] = Depen
     return result
 
 
-@app.post("/memory-route")
 @app.post("/v1/memory-route")
 def memory_route(payload: MemoryRouteRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "route")
@@ -4239,7 +4229,6 @@ def memory_route(payload: MemoryRouteRequest, auth: dict[str, Any] = Depends(ver
     return result
 
 
-@app.post("/task-summaries")
 @app.post("/v1/task-summaries")
 def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
@@ -4353,7 +4342,6 @@ def task_summaries(payload: TaskSummaryWriteRequest, auth: dict[str, Any] = Depe
     }
 
 
-@app.get("/tasks")
 @app.get("/v1/tasks")
 def list_tasks(
     user_id: Optional[str] = None,
@@ -4385,7 +4373,6 @@ def list_tasks(
     }
 
 
-@app.get("/tasks/{task_id}")
 @app.get("/v1/tasks/{task_id}")
 def get_task(task_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
@@ -4406,7 +4393,6 @@ def get_task(task_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     return task
 
 
-@app.post("/tasks/{task_id}/close")
 @app.post("/v1/tasks/{task_id}/close")
 def close_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
@@ -4438,7 +4424,6 @@ def close_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any]
     return {"ok": True, "task_id": task_id, "status": "closed"}
 
 
-@app.post("/tasks/{task_id}/archive")
 @app.post("/v1/tasks/{task_id}/archive")
 def archive_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
@@ -4470,7 +4455,6 @@ def archive_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, An
     return {"ok": True, "task_id": task_id, "status": "archived"}
 
 
-@app.post("/tasks/normalize")
 @app.post("/v1/tasks/normalize")
 def tasks_normalize(payload: TaskNormalizeRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
@@ -4509,7 +4493,6 @@ def tasks_normalize(payload: TaskNormalizeRequest, auth: dict[str, Any] = Depend
     }
 
 
-@app.get("/metrics")
 @app.get("/v1/metrics")
 def metrics(auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "metrics")
@@ -4735,7 +4718,6 @@ def run_consolidation_operation(
     }
 
 
-@app.post("/consolidate")
 @app.post("/v1/consolidate")
 def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
@@ -4750,7 +4732,6 @@ def consolidate(payload: ConsolidateRequest, auth: dict[str, Any] = Depends(veri
     return result
 
 
-@app.post("/governance/jobs")
 @app.post("/v1/governance/jobs")
 def governance_jobs_create(payload: GovernanceJobCreateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
@@ -4800,7 +4781,6 @@ def governance_jobs_create(payload: GovernanceJobCreateRequest, auth: dict[str, 
     return job
 
 
-@app.get("/governance/jobs")
 @app.get("/v1/governance/jobs")
 def governance_jobs_list(
     status: Optional[str] = None,
@@ -4812,7 +4792,6 @@ def governance_jobs_list(
     return {"jobs": list_governance_jobs(status=status, job_type=job_type, limit=limit)}
 
 
-@app.get("/governance/jobs/{job_id}")
 @app.get("/v1/governance/jobs/{job_id}")
 def governance_jobs_get(job_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
@@ -4822,7 +4801,6 @@ def governance_jobs_get(job_id: str, auth: dict[str, Any] = Depends(verify_api_k
     return job
 
 
-@app.post("/governance/jobs/run-next")
 @app.post("/v1/governance/jobs/run-next")
 def governance_jobs_run_next(payload: GovernanceJobRunRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
@@ -4842,7 +4820,6 @@ def governance_jobs_run_next(payload: GovernanceJobRunRequest, auth: dict[str, A
     }
 
 
-@app.post("/agent-keys")
 @app.post("/v1/agent-keys")
 def agent_keys_create(payload: AgentKeyCreateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
@@ -4858,14 +4835,12 @@ def agent_keys_create(payload: AgentKeyCreateRequest, auth: dict[str, Any] = Dep
     )
 
 
-@app.get("/agent-keys")
 @app.get("/v1/agent-keys")
 def agent_keys_list(auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")
     return {"keys": list_api_keys()}
 
 
-@app.get("/audit-log")
 @app.get("/v1/audit-log")
 def audit_log(
     limit: int = 50,
@@ -4876,7 +4851,6 @@ def audit_log(
     return {"events": fetch_audit_log(limit=limit, event_type=event_type)}
 
 
-@app.post("/cache/rebuild")
 @app.post("/v1/cache/rebuild")
 def cache_rebuild(payload: CacheRebuildRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "admin")

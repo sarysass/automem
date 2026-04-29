@@ -130,7 +130,7 @@ def search_memories(cfg: RuntimeConfig, query: str, *, domain: str | None = "lon
     result = _request_json(
         cfg,
         "POST",
-        "/search",
+        "/v1/search",
         {
             "query": query,
             "user_id": cfg.memory_user_id,
@@ -151,7 +151,7 @@ def list_tasks(cfg: RuntimeConfig) -> list[dict[str, Any]]:
     query = {"user_id": cfg.memory_user_id, "status": "active"}
     if cfg.memory_project_id:
         query["project_id"] = cfg.memory_project_id
-    result = _request_json(cfg, "GET", f"/tasks?{urlencode(query)}")
+    result = _request_json(cfg, "GET", f"/v1/tasks?{urlencode(query)}")
     return result.get("tasks", [])
 
 
@@ -208,14 +208,14 @@ def capture_turn(
             "source": "claude-code",
         },
     }
-    routed = _request_json(cfg, "POST", "/memory-route", payload)
+    routed = _request_json(cfg, "POST", "/v1/memory-route", payload)
     if routed.get("route") in {"task", "mixed"} and routed.get("task"):
         task = routed["task"]
         summary = task.get("summary") or {}
         _request_json(
             cfg,
             "POST",
-            "/task-summaries",
+            "/v1/task-summaries",
             {
                 "user_id": cfg.memory_user_id,
                 "agent_id": cfg.memory_agent_id,
@@ -238,7 +238,7 @@ def capture_turn(
             _request_json(
                 cfg,
                 "POST",
-                "/memories",
+                "/v1/memories",
                 {
                     "messages": [{"role": "user", "content": entry["text"]}],
                     "user_id": cfg.memory_user_id,

@@ -62,8 +62,8 @@
 进一步约定为：
 
 - adapter 只调用 hot-path 接口，不直接实现本地 consolidation
-- 后台治理通过 `/governance/jobs` 提交，由 worker 执行 `/governance/jobs/run-next`
-- 如需查看当前分工，可读 `/runtime-topology`
+- 后台治理通过 `/v1/governance/jobs` 提交，由 worker 执行 `/v1/governance/jobs/run-next`
+- 如需查看当前分工，可读 `/v1/runtime-topology`
 
 推荐优先使用以下环境变量：
 

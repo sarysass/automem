@@ -84,7 +84,7 @@ def test_run_consolidation_rejects_non_200(scheduled_module):
 
     class FakeClient:
         def post(self, path: str, json: dict[str, object]):
-            assert path == "/governance/jobs"
+            assert path == "/v1/governance/jobs"
             assert json["payload"]["dry_run"] is False
             return FakeResponse()
 
@@ -140,7 +140,7 @@ def test_run_consolidation_requires_expected_fields(monkeypatch: pytest.MonkeyPa
 
     class FakeClient:
         def post(self, path: str, json: dict[str, object]):
-            assert path == "/consolidate"
+            assert path == "/v1/consolidate"
             return FakeResponse()
 
     with pytest.raises(RuntimeError, match="missing expected keys"):
@@ -156,7 +156,7 @@ def test_run_consolidation_enqueue_requires_expected_fields(scheduled_module):
 
     class FakeClient:
         def post(self, path: str, json: dict[str, object]):
-            assert path == "/governance/jobs"
+            assert path == "/v1/governance/jobs"
             return FakeResponse()
 
     with pytest.raises(RuntimeError, match="governance job response missing expected keys"):

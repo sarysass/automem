@@ -31,7 +31,7 @@ class AutomemClient:
         self._client.close()
 
     def healthz(self) -> dict[str, Any]:
-        response = self._client.get("/healthz")
+        response = self._client.get("/v1/healthz")
         response.raise_for_status()
         return response.json()
 
@@ -54,7 +54,7 @@ class AutomemClient:
             payload["filters"] = filters
         if limit is not None:
             payload["limit"] = limit
-        response = self._client.post("/search", json=payload)
+        response = self._client.post("/v1/search", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -79,7 +79,7 @@ class AutomemClient:
             payload["run_id"] = run_id
         if metadata:
             payload["metadata"] = metadata
-        response = self._client.post("/memories", json=payload)
+        response = self._client.post("/v1/memories", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -95,7 +95,7 @@ class AutomemClient:
             params["agent_id"] = agent_id
         if run_id:
             params["run_id"] = run_id
-        response = self._client.get("/memories", params=params)
+        response = self._client.get("/v1/memories", params=params)
         response.raise_for_status()
         payload = response.json()
         if isinstance(payload, dict):
@@ -107,12 +107,12 @@ class AutomemClient:
         raise TypeError(f"Unexpected /memories payload shape: {type(payload).__name__}")
 
     def get_memory(self, memory_id: str) -> dict[str, Any]:
-        response = self._client.get(f"/memories/{memory_id}")
+        response = self._client.get(f"/v1/memories/{memory_id}")
         response.raise_for_status()
         return response.json()
 
     def forget(self, memory_id: str) -> dict[str, Any]:
-        response = self._client.delete(f"/memories/{memory_id}")
+        response = self._client.delete(f"/v1/memories/{memory_id}")
         response.raise_for_status()
         return response.json()
 
@@ -137,7 +137,7 @@ class AutomemClient:
         }.items():
             if value is not None:
                 payload[key] = value
-        response = self._client.post("/task-resolution", json=payload)
+        response = self._client.post("/v1/task-resolution", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -175,7 +175,7 @@ class AutomemClient:
         }.items():
             if value is not None:
                 payload[key] = value
-        response = self._client.post("/task-summaries", json=payload)
+        response = self._client.post("/v1/task-summaries", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -202,7 +202,7 @@ class AutomemClient:
         }.items():
             if value is not None:
                 payload[key] = value
-        response = self._client.post("/memory-route", json=payload)
+        response = self._client.post("/v1/memory-route", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -224,27 +224,27 @@ class AutomemClient:
             params["limit"] = limit
         if cursor is not None:
             params["cursor"] = cursor
-        response = self._client.get("/tasks", params=params)
+        response = self._client.get("/v1/tasks", params=params)
         response.raise_for_status()
         return response.json()
 
     def get_task(self, task_id: str) -> dict[str, Any]:
-        response = self._client.get(f"/tasks/{task_id}")
+        response = self._client.get(f"/v1/tasks/{task_id}")
         response.raise_for_status()
         return response.json()
 
     def close_task(self, task_id: str, *, reason: str | None = None) -> dict[str, Any]:
-        response = self._client.post(f"/tasks/{task_id}/close", json={"reason": reason})
+        response = self._client.post(f"/v1/tasks/{task_id}/close", json={"reason": reason})
         response.raise_for_status()
         return response.json()
 
     def archive_task(self, task_id: str, *, reason: str | None = None) -> dict[str, Any]:
-        response = self._client.post(f"/tasks/{task_id}/archive", json={"reason": reason})
+        response = self._client.post(f"/v1/tasks/{task_id}/archive", json={"reason": reason})
         response.raise_for_status()
         return response.json()
 
     def metrics(self) -> dict[str, Any]:
-        response = self._client.get("/metrics")
+        response = self._client.get("/v1/metrics")
         if response.status_code != 403:
             response.raise_for_status()
             return response.json()
@@ -254,14 +254,14 @@ class AutomemClient:
         if isinstance(metrics, dict):
             return {"source": "healthz_fallback", **metrics}
         raise httpx.HTTPStatusError(
-            "Client error '403 Forbidden' for url '/metrics' and no metrics in /healthz fallback",
+            "Client error '403 Forbidden' for url '/v1/metrics' and no metrics in /healthz fallback",
             request=response.request,
             response=response,
         )
 
     def consolidate(self, *, dry_run: bool = True) -> dict[str, Any]:
         response = self._client.post(
-            "/consolidate",
+            "/v1/consolidate",
             json={
                 "dry_run": dry_run,
                 "dedupe_long_term": True,

@@ -20,12 +20,12 @@ def seed_duplicate_long_term_memory(client: httpx.Client, *, text: str, user_id:
         "metadata": {"domain": "long_term", "category": "project_context"},
     }
     for _ in range(2):
-        response = client.post("/memories", json=payload)
+        response = client.post("/v1/memories", json=payload)
         assert response.status_code == 200, response.text
 
 
 def fetch_job(client: httpx.Client, job_id: str) -> dict[str, Any] | None:
-    response = client.get(f"/governance/jobs/{job_id}")
+    response = client.get(f"/v1/governance/jobs/{job_id}")
     assert response.status_code in {200, 404}, response.text
     if response.status_code == 404:
         return None
@@ -33,20 +33,20 @@ def fetch_job(client: httpx.Client, job_id: str) -> dict[str, Any] | None:
 
 
 def fetch_listed_job(client: httpx.Client, job_id: str) -> dict[str, Any] | None:
-    response = client.get("/governance/jobs", params={"job_type": "consolidate", "limit": 20})
+    response = client.get("/v1/governance/jobs", params={"job_type": "consolidate", "limit": 20})
     assert response.status_code == 200, response.text
     jobs = response.json()["jobs"]
     return next((job for job in jobs if job["job_id"] == job_id), None)
 
 
 def fetch_governance_metrics(client: httpx.Client) -> dict[str, Any]:
-    response = client.get("/metrics")
+    response = client.get("/v1/metrics")
     assert response.status_code == 200, response.text
     return response.json()["metrics"]["governance_jobs"]
 
 
 def find_audit_event(client: httpx.Client, *, event_type: str, job_id: str) -> dict[str, Any] | None:
-    response = client.get("/audit-log", params={"event_type": event_type, "limit": 20})
+    response = client.get("/v1/audit-log", params={"event_type": event_type, "limit": 20})
     assert response.status_code == 200, response.text
     events = response.json()["events"]
     return next((event for event in events if event.get("detail", {}).get("job_id") == job_id), None)

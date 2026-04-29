@@ -3,7 +3,7 @@ from __future__ import annotations
 
 def _task_ids(client, auth_headers, *, user_id: str, status: str) -> set[str]:
     response = client.get(
-        "/tasks",
+        "/v1/tasks",
         headers=auth_headers,
         params={"user_id": user_id, "status": status, "limit": 200},
     )
@@ -13,7 +13,7 @@ def _task_ids(client, auth_headers, *, user_id: str, status: str) -> set[str]:
 
 def _task_memories(client, auth_headers, *, user_id: str, task_id: str) -> list[dict[str, object]]:
     response = client.get(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         params={"user_id": user_id, "run_id": task_id},
     )
@@ -23,7 +23,7 @@ def _task_memories(client, auth_headers, *, user_id: str, task_id: str) -> list[
 
 def test_multi_hop_handoff_keeps_task_identity_progress_and_next_action(client, auth_headers):
     first = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -44,7 +44,7 @@ def test_multi_hop_handoff_keeps_task_identity_progress_and_next_action(client, 
     assert first_payload["store_task_memory"] is True
 
     resolved = client.post(
-        "/task-resolution",
+        "/v1/task-resolution",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -58,7 +58,7 @@ def test_multi_hop_handoff_keeps_task_identity_progress_and_next_action(client, 
     assert resolved.json()["task_id"] == "task_frontend-panel"
 
     second = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -77,7 +77,7 @@ def test_multi_hop_handoff_keeps_task_identity_progress_and_next_action(client, 
     assert second_payload["action"] == "stored"
     assert second_payload["task"]["task_id"] == "task_frontend-panel"
 
-    task = client.get("/tasks/task_frontend-panel", headers=auth_headers)
+    task = client.get("/v1/tasks/task_frontend-panel", headers=auth_headers)
     assert task.status_code == 200, task.text
     task_payload = task.json()
     assert task_payload["task_id"] == "task_frontend-panel"
@@ -85,7 +85,7 @@ def test_multi_hop_handoff_keeps_task_identity_progress_and_next_action(client, 
     assert task_payload["last_summary"] == "搜索结果排序修完了，开始整理筛选交互。"
 
     search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={
             "query": "前端管理界面的下一步是什么",
@@ -116,7 +116,7 @@ def test_layered_cleanup_archives_noise_and_prunes_old_non_work_without_hiding_r
     backend_module,
 ):
     real_work = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -146,7 +146,7 @@ def test_layered_cleanup_archives_noise_and_prunes_old_non_work_without_hiding_r
         source_agent="openclaw-ring",
         last_summary="NO_REPLY",
     )
-    archived = client.post("/tasks/task_cron-archived-noise/archive", headers=auth_headers, json={"reason": "cleanup"})
+    archived = client.post("/v1/tasks/task_cron-archived-noise/archive", headers=auth_headers, json={"reason": "cleanup"})
     assert archived.status_code == 200, archived.text
 
     task_memory = backend_module.MEMORY_BACKEND.add(
@@ -165,7 +165,7 @@ def test_layered_cleanup_archives_noise_and_prunes_old_non_work_without_hiding_r
     )
 
     normalized = client.post(
-        "/tasks/normalize",
+        "/v1/tasks/normalize",
         headers=auth_headers,
         json={
             "user_id": "user-a",

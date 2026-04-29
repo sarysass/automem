@@ -29,7 +29,7 @@ def test_run_once_posts_to_run_next(worker_module):
 
     class FakeClient:
         def post(self, path: str, json: dict[str, object]):
-            assert path == "/governance/jobs/run-next"
+            assert path == "/v1/governance/jobs/run-next"
             assert json["worker_id"] == "worker-a"
             return FakeResponse()
 

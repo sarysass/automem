@@ -37,7 +37,7 @@ def wait_for_condition(
 def wait_for_http_ready(
     base_url: str,
     *,
-    path: str = "/healthz",
+    path: str = "/v1/healthz",
     expected_statuses: tuple[int, ...] = (200, 401),
     timeout: float = 10.0,
     interval: float = 0.05,

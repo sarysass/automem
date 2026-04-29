@@ -66,7 +66,7 @@ def post_json(base_url: str, path: str, api_key: str, payload: dict[str, Any]) -
 def run_case(base_url: str, api_key: str, case: BenchmarkCase) -> dict[str, Any]:
     payload = dict(case.payload)
     payload.setdefault("limit", 25)
-    result = post_json(base_url, "/search", api_key, payload)
+    result = post_json(base_url, "/v1/search", api_key, payload)
     top1 = (result.get("results") or [{}])[0].get("memory") if result.get("results") else None
     passed = False
     if case.expected_empty:

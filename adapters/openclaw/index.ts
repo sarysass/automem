@@ -322,7 +322,7 @@ async function searchSharedMemory(
   if (payload.filters) {
     body.filters = payload.filters;
   }
-  const result = await apiRequest(cfg, "/search", {
+  const result = await apiRequest(cfg, "/v1/search", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -338,7 +338,7 @@ async function resolveTask(
     channel?: string;
   },
 ): Promise<TaskResolutionResult> {
-  return apiRequest(cfg, "/task-resolution", {
+  return apiRequest(cfg, "/v1/task-resolution", {
     method: "POST",
     body: JSON.stringify({
       user_id: cfg.identity.userId,
@@ -363,7 +363,7 @@ async function routeMemory(
     taskLike?: boolean;
   },
 ): Promise<any> {
-  return apiRequest(cfg, "/memory-route", {
+  return apiRequest(cfg, "/v1/memory-route", {
     method: "POST",
     body: JSON.stringify({
       user_id: cfg.identity.userId,
@@ -414,7 +414,7 @@ async function storeSharedMemory(
   if (payload.domain === "task" && payload.taskId) {
     body.run_id = payload.taskId;
   }
-  return apiRequest(cfg, "/memories", {
+  return apiRequest(cfg, "/v1/memories", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -435,7 +435,7 @@ async function storeTaskSummary(
     channel?: string;
   },
 ): Promise<any> {
-  return apiRequest(cfg, "/task-summaries", {
+  return apiRequest(cfg, "/v1/task-summaries", {
     method: "POST",
     body: JSON.stringify({
       user_id: cfg.identity.userId,
@@ -466,7 +466,7 @@ async function listSharedMemory(
   if (payload.taskId) {
     params.set("run_id", payload.taskId);
   }
-  const result = await apiRequest(cfg, `/memories?${params.toString()}`, { method: "GET" });
+  const result = await apiRequest(cfg, `/v1/memories?${params.toString()}`, { method: "GET" });
   if (Array.isArray(result)) {
     return result as MemoryItem[];
   }

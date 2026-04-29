@@ -15,7 +15,7 @@ _requires_frontend_build = pytest.mark.skipif(
 
 def add_long_term_memory(client, auth_headers, *, text: str, user_id: str, category: str = "project_context"):
     response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": text}],
@@ -29,30 +29,30 @@ def add_long_term_memory(client, auth_headers, *, text: str, user_id: str, categ
 
 
 def test_close_task_returns_404_for_unknown_task(client, auth_headers):
-    response = client.post("/tasks/task_missing/close", headers=auth_headers, json={"reason": "cleanup"})
+    response = client.post("/v1/tasks/task_missing/close", headers=auth_headers, json={"reason": "cleanup"})
     assert response.status_code == 404
 
 
 def test_archive_task_returns_404_for_unknown_task(client, auth_headers):
-    response = client.post("/tasks/task_missing/archive", headers=auth_headers, json={"reason": "cleanup"})
+    response = client.post("/v1/tasks/task_missing/archive", headers=auth_headers, json={"reason": "cleanup"})
     assert response.status_code == 404
 
 
 def test_missing_api_key_requires_header(client):
-    response = client.get("/healthz")
+    response = client.get("/v1/healthz")
     assert response.status_code == 401
     assert response.json()["detail"] == "X-API-Key header is required"
 
 
 def test_invalid_api_key_is_rejected(client):
-    response = client.get("/healthz", headers={"X-API-Key": "invalid-token"})
+    response = client.get("/v1/healthz", headers={"X-API-Key": "invalid-token"})
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid API key"
 
 
 def test_agent_keys_reject_non_admin_without_user_binding(client, auth_headers):
     response = client.post(
-        "/agent-keys",
+        "/v1/agent-keys",
         headers=auth_headers,
         json={
             "agent_id": "agent-missing-user",
@@ -84,7 +84,7 @@ def test_unbound_non_admin_api_key_is_rejected_at_verification(client, backend_m
         )
         conn.commit()
 
-    response = client.get("/healthz", headers={"X-API-Key": "unbound-token"})
+    response = client.get("/v1/healthz", headers={"X-API-Key": "unbound-token"})
     assert response.status_code == 403
     assert response.json()["detail"] == "Non-admin API keys must be bound to a user_id"
 
@@ -96,7 +96,7 @@ def test_consolidate_respects_requested_user_scope(client, auth_headers):
     add_long_term_memory(client, auth_headers, text="Example Corp is durable", user_id="user-b")
 
     response = client.post(
-        "/consolidate",
+        "/v1/consolidate",
         headers=auth_headers,
         json={"dry_run": True, "user_id": "user-a"},
     )
@@ -108,7 +108,7 @@ def test_consolidate_respects_requested_user_scope(client, auth_headers):
 
 def test_add_memory_canonicalizes_preference_alias_and_skips_duplicate(client, auth_headers):
     english = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Prefers communication in Chinese"}],
@@ -121,7 +121,7 @@ def test_add_memory_canonicalizes_preference_alias_and_skips_duplicate(client, a
     assert english.json()["results"][0]["memory"] == "偏好使用中文沟通"
 
     duplicate = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "偏好使用中文沟通"}],
@@ -135,7 +135,7 @@ def test_add_memory_canonicalizes_preference_alias_and_skips_duplicate(client, a
     assert payload["status"] == "skipped"
     assert payload["reason"] == "duplicate"
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     results = listed.json()["results"]
     assert [item["memory"] for item in results] == ["偏好使用中文沟通"]
@@ -143,7 +143,7 @@ def test_add_memory_canonicalizes_preference_alias_and_skips_duplicate(client, a
 
 def test_long_term_fact_supersedes_previous_active_fact_and_history_is_opt_in(client, auth_headers):
     first = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "偏好使用中文沟通"}],
@@ -156,7 +156,7 @@ def test_long_term_fact_supersedes_previous_active_fact_and_history_is_opt_in(cl
     first_payload = first.json()
 
     second = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "偏好使用英文沟通"}],
@@ -171,7 +171,7 @@ def test_long_term_fact_supersedes_previous_active_fact_and_history_is_opt_in(cl
     assert second_payload["fact_action"] == "superseded"
     assert second_payload["superseded_memory_ids"] == [first_payload["results"][0]["id"]]
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     memories = listed.json()["results"]
     assert len(memories) == 2
@@ -183,7 +183,7 @@ def test_long_term_fact_supersedes_previous_active_fact_and_history_is_opt_in(cl
     assert by_status["superseded"]["metadata"]["valid_to"]
 
     search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "沟通", "user_id": "user-a"},
     )
@@ -193,7 +193,7 @@ def test_long_term_fact_supersedes_previous_active_fact_and_history_is_opt_in(cl
     assert payload["results"][0]["memory"] == "偏好使用英文沟通"
 
     history = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "沟通", "user_id": "user-a", "include_history": True},
     )
@@ -206,7 +206,7 @@ def test_long_term_conflict_review_keeps_existing_active_fact(client, auth_heade
     first = add_long_term_memory(client, auth_headers, text="公司是Example Corp", user_id="user-a", category="project_context")
 
     second = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "公司是Another Corp"}],
@@ -221,7 +221,7 @@ def test_long_term_conflict_review_keeps_existing_active_fact(client, auth_heade
     assert second_payload["fact_action"] == "review_required"
     assert second_payload["conflicts_with"] == [first["results"][0]["id"]]
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     memories = listed.json()["results"]
     active = [item for item in memories if item["metadata"].get("status") == "active"]
@@ -232,7 +232,7 @@ def test_long_term_conflict_review_keeps_existing_active_fact(client, auth_heade
     assert review[0]["metadata"]["review_status"] == "pending"
 
     search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "公司", "user_id": "user-a"},
     )
@@ -240,7 +240,7 @@ def test_long_term_conflict_review_keeps_existing_active_fact(client, auth_heade
     assert [item["memory"] for item in search.json()["results"]] == ["公司是Example Corp"]
 
     review_search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "Another", "user_id": "user-a", "include_history": True, "filters": {"status": "conflict_review"}},
     )
@@ -253,7 +253,7 @@ def test_long_term_conflict_review_keeps_existing_active_fact(client, auth_heade
 def test_add_memory_rejects_task_noise_markers(client, auth_headers):
     for text in ("NO_REPLY", "[[reply_to_current]] 已完成实际测试"):
         response = client.post(
-            "/memories",
+            "/v1/memories",
             headers=auth_headers,
             json={
                 "messages": [{"role": "user", "content": text}],
@@ -268,14 +268,14 @@ def test_add_memory_rejects_task_noise_markers(client, auth_headers):
         assert payload["status"] == "skipped"
         assert payload["reason"] == "noise"
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_alpha"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_alpha"})
     assert listed.status_code == 200, listed.text
     assert listed.json()["results"] == []
 
 
 def test_add_memory_rejects_transport_metadata_noise(client, auth_headers):
     response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": 'Conversation info (untrusted metadata): {"message_id":"1","sender":"bot"}'}],
@@ -299,7 +299,7 @@ def test_extract_long_term_entries_skips_query_like_identity_or_preference_text(
 
 def test_memory_route_drops_time_scaffold(client, auth_headers):
     response = client.post(
-        "/memory-route",
+        "/v1/memory-route",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -315,7 +315,7 @@ def test_memory_route_drops_time_scaffold(client, auth_headers):
 
 def test_memory_route_does_not_materialize_task_rows(client, auth_headers):
     response = client.post(
-        "/memory-route",
+        "/v1/memory-route",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -330,7 +330,7 @@ def test_memory_route_does_not_materialize_task_rows(client, auth_headers):
     assert payload["route"] in {"task", "mixed"}
 
     tasks = client.get(
-        "/tasks",
+        "/v1/tasks",
         headers=auth_headers,
         params={"user_id": "user-a", "project_id": "automem-demo", "status": "active"},
     )
@@ -381,7 +381,7 @@ def test_consolidate_canonicalizes_legacy_preferences_and_removes_task_noise(cli
     )
 
     response = client.post(
-        "/consolidate",
+        "/v1/consolidate",
         headers=auth_headers,
         json={"dry_run": False, "user_id": "user-a"},
     )
@@ -390,7 +390,7 @@ def test_consolidate_canonicalizes_legacy_preferences_and_removes_task_noise(cli
     assert payload["canonicalized_long_term_count"] == 1
     assert payload["deleted_noise_count"] == 1
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     memories = listed.json()["results"]
     assert [item["memory"] for item in memories if item["metadata"].get("category") == "preference"] == ["偏好使用中文沟通"]
@@ -431,7 +431,7 @@ def test_consolidate_removes_time_and_metadata_noise_and_normalizes_tasks(client
     )
 
     response = client.post(
-        "/consolidate",
+        "/v1/consolidate",
         headers=auth_headers,
         json={"dry_run": False, "user_id": "user-a"},
     )
@@ -441,7 +441,7 @@ def test_consolidate_removes_time_and_metadata_noise_and_normalizes_tasks(client
     assert payload["normalized_tasks_count"] >= 1
     assert payload["task_reclassified_count"] >= 1
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     texts = [item["memory"] for item in listed.json()["results"]]
     assert not any(text.startswith("Current time:") for text in texts)
@@ -505,7 +505,7 @@ def test_consolidate_supersedes_legacy_active_fact_versions(client, auth_headers
     )
 
     response = client.post(
-        "/consolidate",
+        "/v1/consolidate",
         headers=auth_headers,
         json={"dry_run": False, "user_id": "user-a"},
     )
@@ -513,7 +513,7 @@ def test_consolidate_supersedes_legacy_active_fact_versions(client, auth_headers
     payload = response.json()
     assert payload["superseded_fact_count"] == 1
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     memories = listed.json()["results"]
     statuses = {item["memory"]: item["metadata"]["status"] for item in memories}
@@ -530,7 +530,7 @@ def test_search_uses_cache_path_without_get_all(client, auth_headers, backend_mo
     backend_module.MEMORY_BACKEND.get_all = fail_get_all
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "routing", "user_id": "user-a"},
     )
@@ -542,7 +542,7 @@ def test_search_uses_cache_path_without_get_all(client, auth_headers, backend_mo
 
 def test_admin_search_without_identity_scope_falls_back_to_cache_only(client, auth_headers):
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "示例用户"},
     )
@@ -554,7 +554,7 @@ def test_admin_search_without_identity_scope_falls_back_to_cache_only(client, au
 def test_identity_query_prefers_user_profile_over_task_noise(client, auth_headers, backend_module):
     add_long_term_memory(client, auth_headers, text="姓名是示例用户", user_id="user-a", category="user_profile")
     task_response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "下一步是检查前端管理界面"}],
@@ -587,7 +587,7 @@ def test_identity_query_prefers_user_profile_over_task_noise(client, auth_header
     backend_module.MEMORY_BACKEND.search = noisy_search
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "我的名字叫什么", "user_id": "user-a"},
     )
@@ -603,7 +603,7 @@ def test_name_query_prefers_name_over_role(client, auth_headers):
     add_long_term_memory(client, auth_headers, text="身份是CEO", user_id="user-a", category="user_profile")
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "我的名字叫什么", "user_id": "user-a"},
     )
@@ -616,7 +616,7 @@ def test_name_query_prefers_name_over_role(client, auth_headers):
 def test_company_query_prefers_project_context_over_task_noise(client, auth_headers, backend_module):
     add_long_term_memory(client, auth_headers, text="公司是Example Corp", user_id="user-a", category="project_context")
     task_response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "下一步是联系Example Corp相关站点"}],
@@ -649,7 +649,7 @@ def test_company_query_prefers_project_context_over_task_noise(client, auth_head
     backend_module.MEMORY_BACKEND.search = noisy_search
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "我的公司是什么", "user_id": "user-a"},
     )
@@ -664,7 +664,7 @@ def test_language_query_prefers_language_preference_over_summary_style(client, a
     add_long_term_memory(client, auth_headers, text="偏好简洁直接的总结", user_id="user-a", category="preference")
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "请用什么语言和我沟通", "user_id": "user-a"},
     )
@@ -687,7 +687,7 @@ def test_identity_query_rewrites_vector_query_for_semantic_search(client, auth_h
     backend_module.MEMORY_BACKEND.search = recording_search
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "我的名字叫什么", "user_id": "user-a"},
     )
@@ -709,7 +709,7 @@ def test_english_name_query_is_classified_as_identity_lookup(client, auth_header
     backend_module.MEMORY_BACKEND.search = recording_search
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "what is the user's name", "user_id": "user-a"},
     )
@@ -726,7 +726,7 @@ def test_search_endpoint_accepts_larger_limit_for_candidate_expansion(client, au
     add_long_term_memory(client, auth_headers, text="身份是CEO", user_id="user-a", category="user_profile")
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "我的名字叫什么", "user_id": "user-a", "limit": 25},
     )
@@ -759,7 +759,7 @@ def test_search_results_include_semantic_explainability(client, auth_headers, ba
     backend_module.MEMORY_BACKEND.search = semantic_search
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "我的名字叫什么", "user_id": "user-a"},
     )
@@ -775,7 +775,7 @@ def test_search_results_include_semantic_explainability(client, auth_headers, ba
 
 def test_search_results_include_filtered_hit_explainability(client, auth_headers):
     created = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "Alpha deployment checklist"}],
@@ -788,7 +788,7 @@ def test_search_results_include_filtered_hit_explainability(client, auth_headers
     assert created.status_code == 200, created.text
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={
             "query": "Alpha",
@@ -812,7 +812,7 @@ def test_admin_search_without_user_scope_can_query_global_cache(client, auth_hea
     add_long_term_memory(client, auth_headers, text="公司是Example Corp", user_id="user-a", category="project_context")
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "Example Corp"},
     )
@@ -826,7 +826,7 @@ def test_admin_search_without_user_scope_supports_short_chinese_keyword(client, 
     add_long_term_memory(client, auth_headers, text="公司是Example Corp", user_id="user-a", category="project_context")
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "Example"},
     )
@@ -840,7 +840,7 @@ def test_admin_search_without_user_scope_supports_short_chinese_keyword(client, 
 def test_task_query_defaults_to_task_domain(client, auth_headers):
     add_long_term_memory(client, auth_headers, text="公司是Example Corp", user_id="user-a", category="project_context")
     task_response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "下一步是检查前端管理界面"}],
@@ -853,7 +853,7 @@ def test_task_query_defaults_to_task_domain(client, auth_headers):
     assert task_response.status_code == 200, task_response.text
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "下一步是什么", "user_id": "user-a"},
     )
@@ -866,7 +866,7 @@ def test_task_query_defaults_to_task_domain(client, auth_headers):
 
 def test_task_query_with_subject_prefers_matching_task_memory(client, auth_headers):
     generic = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "下一步是检查前端管理界面"}],
@@ -878,7 +878,7 @@ def test_task_query_with_subject_prefers_matching_task_memory(client, auth_heade
     )
     assert generic.status_code == 200, generic.text
     targeted = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "视频压缩方案遇到 OOM，下一步是降低分辨率并继续验证。"}],
@@ -891,7 +891,7 @@ def test_task_query_with_subject_prefers_matching_task_memory(client, auth_heade
     assert targeted.status_code == 200, targeted.text
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "视频压缩方案的下一步是什么", "user_id": "user-a"},
     )
@@ -903,7 +903,7 @@ def test_task_query_with_subject_prefers_matching_task_memory(client, auth_heade
 
 def test_task_query_with_subject_returns_empty_when_no_matching_task_memory(client, auth_headers):
     generic = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "下一步是检查前端管理界面"}],
@@ -916,7 +916,7 @@ def test_task_query_with_subject_returns_empty_when_no_matching_task_memory(clie
     assert generic.status_code == 200, generic.text
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "视频压缩方案的下一步是什么", "user_id": "user-a"},
     )
@@ -937,7 +937,7 @@ def test_task_query_can_match_task_aliases_via_metadata(client, auth_headers, ba
         aliases=["视频压缩方案"],
     )
     stored = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "下一步是降低分辨率并继续验证。"}],
@@ -957,7 +957,7 @@ def test_task_query_can_match_task_aliases_via_metadata(client, auth_headers, ba
     assert stored.status_code == 200, stored.text
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "视频压缩方案的下一步是什么", "user_id": "user-a", "project_id": "automem-demo"},
     )
@@ -973,7 +973,7 @@ def test_task_query_can_match_task_aliases_via_metadata(client, auth_headers, ba
 
 def test_task_resolution_handles_next_step_question_against_existing_task(client, auth_headers):
     summary_response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -989,7 +989,7 @@ def test_task_resolution_handles_next_step_question_against_existing_task(client
     assert summary_response.status_code == 200, summary_response.text
 
     resolution = client.post(
-        "/task-resolution",
+        "/v1/task-resolution",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1006,7 +1006,7 @@ def test_task_resolution_handles_next_step_question_against_existing_task(client
 
 def test_task_resolution_does_not_create_task_for_status_check_question(client, auth_headers):
     resolution = client.post(
-        "/task-resolution",
+        "/v1/task-resolution",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1022,7 +1022,7 @@ def test_task_resolution_does_not_create_task_for_status_check_question(client, 
 
 def test_task_resolution_avoids_false_positive_match_for_unrelated_next_step_question(client, auth_headers):
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1037,7 +1037,7 @@ def test_task_resolution_avoids_false_positive_match_for_unrelated_next_step_que
     assert response.status_code == 200, response.text
 
     resolution = client.post(
-        "/task-resolution",
+        "/v1/task-resolution",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1070,7 +1070,7 @@ def test_tasks_list_marks_system_and_meta_tasks(client, auth_headers, backend_mo
     )
 
     work_task = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1083,7 +1083,7 @@ def test_tasks_list_marks_system_and_meta_tasks(client, auth_headers, backend_mo
     )
     assert work_task.status_code == 200, work_task.text
 
-    response = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
+    response = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
     assert response.status_code == 200, response.text
     tasks = {task["task_id"]: task for task in response.json()["tasks"]}
     assert tasks["task_cron-12345-watchdog"]["task_kind"] == "system"
@@ -1093,7 +1093,7 @@ def test_tasks_list_marks_system_and_meta_tasks(client, auth_headers, backend_mo
 
 def test_question_style_task_title_is_classified_as_meta(client, auth_headers):
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1109,13 +1109,13 @@ def test_question_style_task_title_is_classified_as_meta(client, auth_headers):
     assert payload["action"] == "skipped"
     assert payload["reason"] == "task_kind:meta"
 
-    tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     assert tasks == []
 
 
 def test_task_status_question_title_is_classified_as_meta(client, auth_headers):
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1131,13 +1131,13 @@ def test_task_status_question_title_is_classified_as_meta(client, auth_headers):
     assert payload["action"] == "skipped"
     assert payload["reason"] == "task_kind:meta"
 
-    tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     assert tasks == []
 
 
 def test_tasks_list_exposes_clean_display_fields(client, auth_headers):
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1150,7 +1150,7 @@ def test_tasks_list_exposes_clean_display_fields(client, auth_headers):
     )
     assert response.status_code == 200, response.text
 
-    tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     indexed = {task["task_id"]: task for task in tasks}
     task = indexed["task_updated-automem-frontend-typography"]
     assert task["display_title"] == "前端字体与溢出修复验证"
@@ -1167,7 +1167,7 @@ def test_tasks_list_maps_no_reply_summary_to_empty_preview(client, auth_headers,
         last_summary="NO_REPLY",
     )
 
-    tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     indexed = {task["task_id"]: task for task in tasks}
     task = indexed["task_cron-12345-watchdog"]
     assert task["display_title"] == "Mac OpenCode 孤儿进程巡检"
@@ -1184,7 +1184,7 @@ def test_tasks_list_supports_cursor_pagination(client, auth_headers, backend_mod
             source_agent="codex",
             last_summary=f"{task_id} summary",
         )
-        archived = client.post(f"/tasks/{task_id}/archive", headers=auth_headers, json={"reason": "pagination"})
+        archived = client.post(f"/v1/tasks/{task_id}/archive", headers=auth_headers, json={"reason": "pagination"})
         assert archived.status_code == 200, archived.text
 
     with sqlite3.connect(backend_module.TASK_DB_PATH) as conn:
@@ -1194,7 +1194,7 @@ def test_tasks_list_supports_cursor_pagination(client, auth_headers, backend_mod
         conn.commit()
 
     first = client.get(
-        "/tasks",
+        "/v1/tasks",
         headers=auth_headers,
         params={"user_id": "user-a", "status": "archived", "limit": 2},
     )
@@ -1205,7 +1205,7 @@ def test_tasks_list_supports_cursor_pagination(client, auth_headers, backend_mod
     assert first_payload["page_info"]["next_cursor"]
 
     second = client.get(
-        "/tasks",
+        "/v1/tasks",
         headers=auth_headers,
         params={
             "user_id": "user-a",
@@ -1223,7 +1223,7 @@ def test_tasks_list_supports_cursor_pagination(client, auth_headers, backend_mod
 
 def test_tasks_list_rewrites_task_resolution_titles_and_keyword_soup_preview(client, auth_headers):
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1236,7 +1236,7 @@ def test_tasks_list_rewrites_task_resolution_titles_and_keyword_soup_preview(cli
     )
     assert response.status_code == 200, response.text
 
-    tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     indexed = {task["task_id"]: task for task in tasks}
     task = indexed["task_task-resolution-centralization"]
     assert task["display_title"] == "共享记忆系统 task resolution 中心化与全端验证"
@@ -1261,7 +1261,7 @@ def test_task_normalize_archives_non_work_items_and_rewrites_titles(client, auth
         last_summary="当前执行任务状态是什么",
     )
     client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1274,7 +1274,7 @@ def test_task_normalize_archives_non_work_items_and_rewrites_titles(client, auth
     )
 
     response = client.post(
-        "/tasks/normalize",
+        "/v1/tasks/normalize",
         headers=auth_headers,
         json={"user_id": "user-a", "archive_non_work_active": True, "dry_run": False},
     )
@@ -1282,13 +1282,13 @@ def test_task_normalize_archives_non_work_items_and_rewrites_titles(client, auth
     payload = response.json()
     assert payload["archived_tasks"] >= 2
 
-    active = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    active = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     active_ids = {task["task_id"] for task in active}
     assert "task_work_clean" in active_ids
     assert "task_cron-12345-watchdog" not in active_ids
     assert "task_当前执行任务状态是什么" not in active_ids
 
-    archived = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
+    archived = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
     archived_index = {task["task_id"]: task for task in archived}
     assert archived_index["task_cron-12345-watchdog"]["title"] == "Mac OpenCode 孤儿进程巡检"
 
@@ -1302,7 +1302,7 @@ def test_task_normalize_can_prune_archived_non_work_tasks_and_memory(client, aut
         source_agent="openclaw-ring",
         last_summary="NO_REPLY",
     )
-    archived = client.post("/tasks/task_cron-prune-me/archive", headers=auth_headers, json={"reason": "cleanup"})
+    archived = client.post("/v1/tasks/task_cron-prune-me/archive", headers=auth_headers, json={"reason": "cleanup"})
     assert archived.status_code == 200, archived.text
 
     task_memory = backend_module.MEMORY_BACKEND.add(
@@ -1321,7 +1321,7 @@ def test_task_normalize_can_prune_archived_non_work_tasks_and_memory(client, aut
     )
 
     response = client.post(
-        "/tasks/normalize",
+        "/v1/tasks/normalize",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1335,10 +1335,10 @@ def test_task_normalize_can_prune_archived_non_work_tasks_and_memory(client, aut
     assert payload["deleted_archived_non_work_tasks"] >= 1
     assert payload["deleted_archived_non_work_memory"] >= 1
 
-    archived_tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
+    archived_tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
     assert "task_cron-prune-me" not in {task["task_id"] for task in archived_tasks}
 
-    memories = client.get("/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_cron-prune-me"}).json()["results"]
+    memories = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_cron-prune-me"}).json()["results"]
     assert memories == []
 
 
@@ -1351,7 +1351,7 @@ def test_task_normalize_prune_keeps_task_when_memory_delete_fails(client, auth_h
         source_agent="openclaw-ring",
         last_summary="NO_REPLY",
     )
-    archived = client.post("/tasks/task_cron-prune-fails/archive", headers=auth_headers, json={"reason": "cleanup"})
+    archived = client.post("/v1/tasks/task_cron-prune-fails/archive", headers=auth_headers, json={"reason": "cleanup"})
     assert archived.status_code == 200, archived.text
 
     task_memory = backend_module.MEMORY_BACKEND.add(
@@ -1377,7 +1377,7 @@ def test_task_normalize_prune_keeps_task_when_memory_delete_fails(client, auth_h
     backend_module.MEMORY_BACKEND.delete = failing_delete
     with pytest.raises(RuntimeError, match="Failed to delete archived non-work task memories"):
         client.post(
-            "/tasks/normalize",
+            "/v1/tasks/normalize",
             headers=auth_headers,
             json={
                 "user_id": "user-a",
@@ -1388,10 +1388,10 @@ def test_task_normalize_prune_keeps_task_when_memory_delete_fails(client, auth_h
         )
     backend_module.MEMORY_BACKEND.delete = original_delete
 
-    archived_tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
+    archived_tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
     assert "task_cron-prune-fails" in {task["task_id"] for task in archived_tasks}
 
-    memories = client.get("/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_cron-prune-fails"}).json()["results"]
+    memories = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_cron-prune-fails"}).json()["results"]
     assert memories
 
 
@@ -1412,11 +1412,11 @@ def test_task_normalize_archives_and_prunes_work_tasks_without_task_memory(clien
         source_agent="codex",
         last_summary="整理文档摘要。",
     )
-    archived = client.post("/tasks/task_orphan_archived/archive", headers=auth_headers, json={"reason": "cleanup"})
+    archived = client.post("/v1/tasks/task_orphan_archived/archive", headers=auth_headers, json={"reason": "cleanup"})
     assert archived.status_code == 200, archived.text
 
     with_memory = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1430,7 +1430,7 @@ def test_task_normalize_archives_and_prunes_work_tasks_without_task_memory(clien
     assert with_memory.status_code == 200, with_memory.text
 
     response = client.post(
-        "/tasks/normalize",
+        "/v1/tasks/normalize",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1449,12 +1449,12 @@ def test_task_normalize_archives_and_prunes_work_tasks_without_task_memory(clien
     assert payload["archived_work_without_memory_tasks"] >= 1
     assert payload["deleted_archived_work_without_memory_tasks"] >= 1
 
-    active = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    active = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     active_ids = {task["task_id"] for task in active}
     assert "task_orphan_active" not in active_ids
     assert "task_backed_by_memory" in active_ids
 
-    archived_tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
+    archived_tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "archived"}).json()["tasks"]
     archived_ids = {task["task_id"] for task in archived_tasks}
     assert "task_orphan_active" in archived_ids
     assert "task_orphan_archived" not in archived_ids
@@ -1462,7 +1462,7 @@ def test_task_normalize_archives_and_prunes_work_tasks_without_task_memory(clien
 
 def test_agent_key_enforces_bound_agent_identity(client, auth_headers):
     key_response = client.post(
-        "/agent-keys",
+        "/v1/agent-keys",
         headers=auth_headers,
         json={
             "agent_id": "agent-alpha",
@@ -1475,7 +1475,7 @@ def test_agent_key_enforces_bound_agent_identity(client, auth_headers):
     token = key_response.json()["token"]
 
     mismatch = client.post(
-        "/memories",
+        "/v1/memories",
         headers={"X-API-Key": token},
         json={
             "messages": [{"role": "user", "content": "alpha"}],
@@ -1488,7 +1488,7 @@ def test_agent_key_enforces_bound_agent_identity(client, auth_headers):
     assert mismatch.status_code == 403
 
     ok = client.post(
-        "/memories",
+        "/v1/memories",
         headers={"X-API-Key": token},
         json={
             "messages": [{"role": "user", "content": "alpha"}],
@@ -1501,7 +1501,7 @@ def test_agent_key_enforces_bound_agent_identity(client, auth_headers):
 
 def test_agent_key_search_is_bound_to_declared_user(client, auth_headers):
     key_response = client.post(
-        "/agent-keys",
+        "/v1/agent-keys",
         headers=auth_headers,
         json={
             "agent_id": "agent-alpha",
@@ -1514,7 +1514,7 @@ def test_agent_key_search_is_bound_to_declared_user(client, auth_headers):
     token = key_response.json()["token"]
 
     mismatch = client.post(
-        "/search",
+        "/v1/search",
         headers={"X-API-Key": token},
         json={"query": "alpha", "user_id": "user-b"},
     )
@@ -1532,7 +1532,7 @@ def test_task_summaries_store_each_field_as_memory_message(client, auth_headers,
     backend_module.MEMORY_BACKEND.add = recording_add
 
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1560,7 +1560,7 @@ def test_task_summaries_skip_memory_for_system_task(client, auth_headers, backen
     backend_module.MEMORY_BACKEND.add = recording_add
 
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1580,7 +1580,7 @@ def test_task_summaries_skip_memory_for_system_task(client, auth_headers, backen
 
 def test_task_summaries_skip_task_row_when_no_task_memory_fields_are_accepted(client, auth_headers):
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -1597,10 +1597,10 @@ def test_task_summaries_skip_task_row_when_no_task_memory_fields_are_accepted(cl
     assert payload["reason"] == "no_task_memory_fields_accepted"
     assert payload["store_task_memory"] is False
 
-    tasks = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
+    tasks = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"}).json()["tasks"]
     assert "task_empty_after_governance" not in {task["task_id"] for task in tasks}
 
-    memories = client.get("/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_empty_after_governance"}).json()["results"]
+    memories = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a", "run_id": "task_empty_after_governance"}).json()["results"]
     assert memories == []
 
 
@@ -1613,12 +1613,12 @@ def test_cache_rebuild_restores_index_for_existing_memories(client, auth_headers
     memory_id = result["id"]
     backend_module.delete_cached_memory(memory_id)
 
-    rebuild = client.post("/cache/rebuild", headers=auth_headers, json={"user_id": "user-a"})
+    rebuild = client.post("/v1/cache/rebuild", headers=auth_headers, json={"user_id": "user-a"})
     assert rebuild.status_code == 200, rebuild.text
     assert rebuild.json()["rebuilt"] >= 1
 
     search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "routing", "user_id": "user-a"},
     )
@@ -1643,10 +1643,10 @@ def test_cache_rebuild_removes_stale_entries(client, auth_headers, backend_modul
     )
     backend_module.MEMORY_BACKEND.delete(memory_id)
 
-    rebuild = client.post("/cache/rebuild", headers=auth_headers, json={"user_id": "user-a"})
+    rebuild = client.post("/v1/cache/rebuild", headers=auth_headers, json={"user_id": "user-a"})
     assert rebuild.status_code == 200, rebuild.text
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     assert all(item["id"] != memory_id for item in listed.json()["results"])
 
@@ -1675,7 +1675,7 @@ def test_admin_tasks_can_list_active_tasks_without_user_id(client, auth_headers,
         last_summary="Beta",
     )
 
-    response = client.get("/tasks", headers=auth_headers, params={"status": "active"})
+    response = client.get("/v1/tasks", headers=auth_headers, params={"status": "active"})
     assert response.status_code == 200, response.text
     payload = response.json()
     assert [task["task_id"] for task in payload["tasks"]] == ["task_b", "task_a"]
@@ -1683,7 +1683,7 @@ def test_admin_tasks_can_list_active_tasks_without_user_id(client, auth_headers,
 
 def test_non_admin_tasks_listing_without_user_id_uses_bound_user(client, auth_headers):
     key_response = client.post(
-        "/agent-keys",
+        "/v1/agent-keys",
         headers=auth_headers,
         json={
             "agent_id": "agent-alpha",
@@ -1695,7 +1695,7 @@ def test_non_admin_tasks_listing_without_user_id_uses_bound_user(client, auth_he
     assert key_response.status_code == 200, key_response.text
     token = key_response.json()["token"]
 
-    response = client.get("/tasks", headers={"X-API-Key": token}, params={"status": "active"})
+    response = client.get("/v1/tasks", headers={"X-API-Key": token}, params={"status": "active"})
     assert response.status_code == 200, response.text
     assert response.json() == {
         "tasks": [],
@@ -1714,7 +1714,7 @@ def test_admin_tasks_listing_defaults_to_recent_50_items(client, auth_headers, b
             last_summary=f"Summary {index:02d}",
         )
 
-    response = client.get("/tasks", headers=auth_headers, params={"status": "active"})
+    response = client.get("/v1/tasks", headers=auth_headers, params={"status": "active"})
     assert response.status_code == 200, response.text
     payload = response.json()
     assert len(payload["tasks"]) == 50
@@ -1732,7 +1732,7 @@ def test_task_listing_sanitizes_metadata_titles_using_summary(client, auth_heade
         last_summary="已完成 smoke 测试，下一步是检查前端管理界面。",
     )
 
-    response = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
+    response = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
     assert response.status_code == 200, response.text
     task = response.json()["tasks"][0]
     assert task["title"] == "检查前端管理界面"
@@ -1748,7 +1748,7 @@ def test_task_listing_sanitizes_cron_titles(client, auth_headers, backend_module
         last_summary="NO_REPLY",
     )
 
-    response = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
+    response = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
     assert response.status_code == 200, response.text
     task = response.json()["tasks"][0]
     assert task["title"] == "Mac OpenCode 孤儿进程巡检"
@@ -1765,7 +1765,7 @@ def test_task_listing_rewrites_keyword_soup_titles(client, auth_headers, backend
         last_summary="task todo pending deadline follow-up next action 待办 任务 跟进 截止",
     )
 
-    response = client.get("/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
+    response = client.get("/v1/tasks", headers=auth_headers, params={"user_id": "user-a", "status": "active"})
     assert response.status_code == 200, response.text
     task = response.json()["tasks"][0]
     assert task["title"] == "待办任务跟进与截止项"
@@ -1773,28 +1773,28 @@ def test_task_listing_rewrites_keyword_soup_titles(client, auth_headers, backend
 
 @_requires_frontend_build
 def test_ui_index_is_available(client, auth_headers):
-    response = client.get("/ui", headers=auth_headers)
+    response = client.get("/v1/ui", headers=auth_headers)
     assert response.status_code == 200, response.text
     assert "记忆平台管理台" in response.text
 
 
 @_requires_frontend_build
 def test_ui_route_serves_chinese_management_page(client):
-    response = client.get("/ui")
+    response = client.get("/v1/ui")
     assert response.status_code == 200, response.text
     assert "记忆平台管理台" in response.text
 
 
 def test_ui_route_reports_missing_build_artifacts(client, auth_headers, backend_module, tmp_path):
     backend_module.FRONTEND_BUILD_DIR = tmp_path / "missing-ui-build"
-    response = client.get("/ui", headers=auth_headers)
+    response = client.get("/v1/ui", headers=auth_headers)
     assert response.status_code == 503, response.text
     assert "前端构建产物不存在" in response.text
 
 
 def test_metrics_reflect_route_activity(client, auth_headers):
     route = client.post(
-        "/memory-route",
+        "/v1/memory-route",
         headers=auth_headers,
         json={
                 "user_id": "user-a",
@@ -1806,7 +1806,7 @@ def test_metrics_reflect_route_activity(client, auth_headers):
         )
     assert route.status_code == 200, route.text
 
-    metrics = client.get("/metrics", headers=auth_headers)
+    metrics = client.get("/v1/metrics", headers=auth_headers)
     assert metrics.status_code == 200, metrics.text
     payload = metrics.json()["metrics"]
     assert payload["events"]["memory_route"] >= 1
@@ -1815,7 +1815,7 @@ def test_metrics_reflect_route_activity(client, auth_headers):
 
 def test_inferred_memory_writes_populate_cache_for_future_governance(client, auth_headers):
     response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "raw input that may be canonicalized"}],
@@ -1826,7 +1826,7 @@ def test_inferred_memory_writes_populate_cache_for_future_governance(client, aut
     )
     assert response.status_code == 200, response.text
 
-    metrics = client.get("/metrics", headers=auth_headers)
+    metrics = client.get("/v1/metrics", headers=auth_headers)
     assert metrics.status_code == 200, metrics.text
     assert metrics.json()["metrics"]["memory_cache"]["entries"] == 1
 
@@ -1876,7 +1876,7 @@ def test_metrics_expose_task_kind_and_memory_domain_breakdown(client, auth_heade
         metadata={"domain": "task", "category": "next_action", "task_id": "task_work_clean"},
     )
 
-    metrics = client.get("/metrics", headers=auth_headers)
+    metrics = client.get("/v1/metrics", headers=auth_headers)
     assert metrics.status_code == 200, metrics.text
     payload = metrics.json()["metrics"]
     assert payload["tasks"]["by_kind"]["work"] >= 1
@@ -1888,12 +1888,12 @@ def test_metrics_expose_task_kind_and_memory_domain_breakdown(client, auth_heade
 
 
 def test_runtime_topology_exposes_api_worker_and_mcp_contract(client, auth_headers):
-    response = client.get("/runtime-topology", headers=auth_headers)
+    response = client.get("/v1/runtime-topology", headers=auth_headers)
     assert response.status_code == 200, response.text
 
     payload = response.json()
-    assert payload["runtime"]["api"]["background_submission_endpoint"] == "/governance/jobs"
-    assert "/governance/jobs/run-next" in payload["runtime"]["worker"]["run_next_endpoint"]
+    assert payload["runtime"]["api"]["background_submission_endpoint"] == "/v1/governance/jobs"
+    assert "/v1/governance/jobs/run-next" in payload["runtime"]["worker"]["run_next_endpoint"]
     assert "memory_route" in payload["runtime"]["mcp_control_plane"]["allowed_hot_path_tools"]
 
 
@@ -1902,7 +1902,7 @@ def test_governance_job_queue_executes_consolidation_and_updates_metrics(client,
     add_long_term_memory(client, auth_headers, text="Example Corp is durable", user_id="user-a")
 
     enqueued = client.post(
-        "/governance/jobs",
+        "/v1/governance/jobs",
         headers=auth_headers,
         json={
             "job_type": "consolidate",
@@ -1916,7 +1916,7 @@ def test_governance_job_queue_executes_consolidation_and_updates_metrics(client,
     assert queued_payload["status"] == "pending"
 
     processed = client.post(
-        "/governance/jobs/run-next",
+        "/v1/governance/jobs/run-next",
         headers=auth_headers,
         json={"worker_id": "worker-a"},
     )
@@ -1927,11 +1927,11 @@ def test_governance_job_queue_executes_consolidation_and_updates_metrics(client,
     assert processed_payload["job"]["result"]["runtime_path"] == "governance_worker"
     assert processed_payload["job"]["result"]["duplicate_long_term_count"] == 1
 
-    fetched = client.get(f"/governance/jobs/{queued_payload['job_id']}", headers=auth_headers)
+    fetched = client.get(f"/v1/governance/jobs/{queued_payload['job_id']}", headers=auth_headers)
     assert fetched.status_code == 200, fetched.text
     assert fetched.json()["status"] == "completed"
 
-    metrics = client.get("/metrics", headers=auth_headers)
+    metrics = client.get("/v1/metrics", headers=auth_headers)
     assert metrics.status_code == 200, metrics.text
     job_metrics = metrics.json()["metrics"]["governance_jobs"]
     assert job_metrics["completed"] >= 1
@@ -1943,7 +1943,7 @@ def test_governance_job_queue_executes_unscoped_consolidation_from_cached_rows(c
     add_long_term_memory(client, auth_headers, text="Global Example Corp is durable", user_id="user-a")
 
     enqueued = client.post(
-        "/governance/jobs",
+        "/v1/governance/jobs",
         headers=auth_headers,
         json={
             "job_type": "consolidate",
@@ -1956,7 +1956,7 @@ def test_governance_job_queue_executes_unscoped_consolidation_from_cached_rows(c
     assert queued_payload["status"] == "pending"
 
     processed = client.post(
-        "/governance/jobs/run-next",
+        "/v1/governance/jobs/run-next",
         headers=auth_headers,
         json={"worker_id": "worker-global"},
     )
@@ -1970,7 +1970,7 @@ def test_governance_job_queue_executes_unscoped_consolidation_from_cached_rows(c
 
 def test_governance_job_enqueue_is_idempotent(client, auth_headers):
     first = client.post(
-        "/governance/jobs",
+        "/v1/governance/jobs",
         headers=auth_headers,
         json={
             "job_type": "consolidate",
@@ -1981,7 +1981,7 @@ def test_governance_job_enqueue_is_idempotent(client, auth_headers):
     assert first.status_code == 200, first.text
 
     second = client.post(
-        "/governance/jobs",
+        "/v1/governance/jobs",
         headers=auth_headers,
         json={
             "job_type": "consolidate",
@@ -2005,7 +2005,7 @@ def test_infer_true_with_metadata_preserves_backend_infer_flag(client, auth_head
     backend_module.MEMORY_BACKEND.add = recording_add
 
     response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": "keep infer semantics with metadata"}],
@@ -2020,7 +2020,7 @@ def test_infer_true_with_metadata_preserves_backend_infer_flag(client, auth_head
 
 def test_audit_log_endpoint_returns_recent_events(client, auth_headers):
     route = client.post(
-        "/memory-route",
+        "/v1/memory-route",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -2042,7 +2042,7 @@ def test_search_audit_log_records_explainability_summary(client, auth_headers):
     add_long_term_memory(client, auth_headers, text="公司是Example Corp", user_id="user-a", category="project_context")
 
     search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "Example", "user_id": "user-a"},
     )
@@ -2061,7 +2061,7 @@ def test_search_audit_log_records_explainability_summary(client, auth_headers):
 
 def test_agent_keys_list_returns_created_key(client, auth_headers):
     created = client.post(
-        "/agent-keys",
+        "/v1/agent-keys",
         headers=auth_headers,
         json={
             "agent_id": "agent-list-test",
@@ -2072,7 +2072,7 @@ def test_agent_keys_list_returns_created_key(client, auth_headers):
     )
     assert created.status_code == 200, created.text
 
-    listed = client.get("/agent-keys", headers=auth_headers)
+    listed = client.get("/v1/agent-keys", headers=auth_headers)
     assert listed.status_code == 200, listed.text
     assert any(
         item["agent_id"] == "agent-list-test" and item["user_id"] == "user-a"

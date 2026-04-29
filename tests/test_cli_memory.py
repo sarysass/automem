@@ -76,7 +76,7 @@ def test_agent_key_create_forwards_bound_identity_fields(monkeypatch, capsys):
         sys.modules.pop(module_name, None)
 
     call = dummy_client.calls[0]
-    assert call["path"] == "/agent-keys"
+    assert call["path"] == "/v1/agent-keys"
     assert call["json"] == {
         "agent_id": "agent-phase04",
         "label": "phase04 key",

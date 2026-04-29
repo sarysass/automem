@@ -7,7 +7,7 @@ from backend.governance.task_policy import classify_task_kind, should_materializ
 
 def _task_ids(client, auth_headers, *, user_id: str, status: str) -> set[str]:
     response = client.get(
-        "/tasks",
+        "/v1/tasks",
         headers=auth_headers,
         params={"user_id": user_id, "status": status, "limit": 200},
     )
@@ -17,7 +17,7 @@ def _task_ids(client, auth_headers, *, user_id: str, status: str) -> set[str]:
 
 def _task_memories(client, auth_headers, *, user_id: str, task_id: str) -> list[dict[str, object]]:
     response = client.get(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         params={"user_id": user_id, "run_id": task_id},
     )
@@ -63,7 +63,7 @@ def test_non_work_task_summaries_do_not_materialize_tasks_or_task_memory(
     summary: str,
 ):
     response = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -92,7 +92,7 @@ def test_consolidate_reports_task_deltas_for_historical_garbage_only_once(client
         last_summary="NO_REPLY",
     )
     work = client.post(
-        "/task-summaries",
+        "/v1/task-summaries",
         headers=auth_headers,
         json={
             "user_id": "user-a",
@@ -106,7 +106,7 @@ def test_consolidate_reports_task_deltas_for_historical_garbage_only_once(client
     assert work.status_code == 200, work.text
 
     first = client.post(
-        "/consolidate",
+        "/v1/consolidate",
         headers=auth_headers,
         json={"dry_run": False, "user_id": "user-a"},
     )
@@ -117,7 +117,7 @@ def test_consolidate_reports_task_deltas_for_historical_garbage_only_once(client
     assert first_payload["active_non_work_detected_count"] > 0
 
     second = client.post(
-        "/consolidate",
+        "/v1/consolidate",
         headers=auth_headers,
         json={"dry_run": False, "user_id": "user-a"},
     )
@@ -177,7 +177,7 @@ def test_metrics_expose_task_kind_and_memory_domain_breakdown(client, auth_heade
         metadata={"domain": "task", "category": "next_action", "task_id": "task_work_clean"},
     )
 
-    response = client.get("/metrics", headers=auth_headers)
+    response = client.get("/v1/metrics", headers=auth_headers)
     assert response.status_code == 200, response.text
     payload = response.json()["metrics"]
 

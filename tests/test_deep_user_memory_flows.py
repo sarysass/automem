@@ -11,7 +11,7 @@ def add_long_term_memory(
     project_id: str | None = None,
 ):
     response = client.post(
-        "/memories",
+        "/v1/memories",
         headers=auth_headers,
         json={
             "messages": [{"role": "user", "content": text}],
@@ -45,7 +45,7 @@ def test_intent_style_language_query_recalls_current_preference_in_top_three(cli
     superseded_memory_id = original["results"][0]["id"]
 
     response = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "我应该用什么语言回复你", "user_id": "user-a", "limit": 3},
     )
@@ -91,7 +91,7 @@ def test_supersede_story_keeps_current_first_and_exposes_history_trace(client, a
     first_id = first["results"][0]["id"]
     second_id = second["results"][0]["id"]
 
-    listed = client.get("/memories", headers=auth_headers, params={"user_id": "user-a"})
+    listed = client.get("/v1/memories", headers=auth_headers, params={"user_id": "user-a"})
     assert listed.status_code == 200, listed.text
     by_status = {item["metadata"]["status"]: item for item in listed.json()["results"]}
     assert by_status["active"]["memory"] == "偏好使用英文沟通"
@@ -100,7 +100,7 @@ def test_supersede_story_keeps_current_first_and_exposes_history_trace(client, a
     assert by_status["superseded"]["metadata"]["superseded_by"] == second_id
 
     current = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "沟通", "user_id": "user-a", "limit": 5},
     )
@@ -111,7 +111,7 @@ def test_supersede_story_keeps_current_first_and_exposes_history_trace(client, a
     assert current_payload["results"][0]["explainability"]["supersedes"] == [first_id]
 
     history = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "沟通", "user_id": "user-a", "include_history": True, "limit": 5},
     )
@@ -147,7 +147,7 @@ def test_conflict_review_story_preserves_active_fact_until_history_is_requested(
     assert conflict["conflicts_with"] == [active_id]
 
     default_search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={"query": "公司", "user_id": "user-a", "limit": 5},
     )
@@ -157,7 +157,7 @@ def test_conflict_review_story_preserves_active_fact_until_history_is_requested(
     assert [item["status"] for item in default_payload["results"]] == ["active"]
 
     review_search = client.post(
-        "/search",
+        "/v1/search",
         headers=auth_headers,
         json={
             "query": "Another",

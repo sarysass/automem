@@ -74,7 +74,7 @@ python scripts/governance_worker.py
 
 - `scripts/scheduled_consolidate.py` 默认只负责 enqueue consolidate 作业
 - `scripts/governance_worker.py` 负责消费后台治理队列
-- `GET /runtime-topology` 可查看 API / worker / MCP 的职责划分
+- `GET /v1/runtime-topology` 可查看 API / worker / MCP 的职责划分
 
 推荐在线上同时启用：
 
