@@ -1927,6 +1927,36 @@ def test_governance_job_queue_executes_consolidation_and_updates_metrics(client,
     assert job_metrics["by_type"]["consolidate"] >= 1
 
 
+def test_governance_job_queue_executes_unscoped_consolidation_from_cached_rows(client, auth_headers):
+    add_long_term_memory(client, auth_headers, text="Global Example Corp is durable", user_id="user-a")
+    add_long_term_memory(client, auth_headers, text="Global Example Corp is durable", user_id="user-a")
+
+    enqueued = client.post(
+        "/governance/jobs",
+        headers=auth_headers,
+        json={
+            "job_type": "consolidate",
+            "payload": {"dry_run": True},
+            "idempotency_key": "consolidate:global:test",
+        },
+    )
+    assert enqueued.status_code == 200, enqueued.text
+    queued_payload = enqueued.json()
+    assert queued_payload["status"] == "pending"
+
+    processed = client.post(
+        "/governance/jobs/run-next",
+        headers=auth_headers,
+        json={"worker_id": "worker-global"},
+    )
+    assert processed.status_code == 200, processed.text
+    processed_payload = processed.json()
+    assert processed_payload["status"] == "processed"
+    assert processed_payload["job"]["status"] == "completed"
+    assert processed_payload["job"]["result"]["runtime_path"] == "governance_worker"
+    assert processed_payload["job"]["result"]["duplicate_long_term_count"] >= 1
+
+
 def test_governance_job_enqueue_is_idempotent(client, auth_headers):
     first = client.post(
         "/governance/jobs",

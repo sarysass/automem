@@ -4524,7 +4524,9 @@ def run_consolidation_operation(
     job_id: Optional[str] = None,
 ) -> dict[str, Any]:
     ensure_task_db()
-    rebuilt_cache_count = rebuild_memory_cache(user_id=payload.user_id, run_id=None, agent_id=None)
+    rebuilt_cache_count = 0
+    if payload.user_id is not None:
+        rebuilt_cache_count = rebuild_memory_cache(user_id=payload.user_id, run_id=None, agent_id=None)
     duplicate_memory_ids: list[str] = []
     noise_memory_ids: list[str] = []
     rewrite_rows: list[dict[str, Any]] = []
