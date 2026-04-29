@@ -1,0 +1,10 @@
+[Unit]
+Description=automem daily data backup (SQLite + Qdrant snapshots)
+After=automem-api.service qdrant.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/automem/scripts/backup_data.sh
+StandardOutput=journal
+StandardError=journal
