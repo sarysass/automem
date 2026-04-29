@@ -76,6 +76,20 @@ python scripts/governance_worker.py
 - `scripts/governance_worker.py` 负责消费后台治理队列
 - `GET /runtime-topology` 可查看 API / worker / MCP 的职责划分
 
+推荐在线上同时启用：
+
+- `automem-api.service`
+- `automem-governance-worker.service`
+- `automem-consolidate.timer`
+
+常用日志查看：
+
+```bash
+journalctl -u automem-api -f
+journalctl -u automem-governance-worker -f
+journalctl -u automem-consolidate.service -n 100
+```
+
 ## Adapter 概览
 
 - `adapters/codex/`：基于 MCP 的 Codex adapter 模板
