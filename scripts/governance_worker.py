@@ -6,12 +6,12 @@ import json
 import logging
 import os
 import socket
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-import httpx
 from dotenv import load_dotenv
 
 
@@ -36,26 +36,20 @@ def load_runtime_env() -> None:
             load_dotenv(candidate)
 
 
-def build_base_url() -> str:
-    configured = os.environ.get("MEMORY_URL")
-    if configured:
-        return configured.rstrip("/")
-    host = os.environ.get("BIND_HOST", "127.0.0.1")
-    port = os.environ.get("BIND_PORT", "8888")
-    return f"http://{host}:{port}"
-
-
-def build_client() -> httpx.Client:
-    api_key = os.environ.get("MEMORY_API_KEY") or os.environ.get("ADMIN_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("Missing MEMORY_API_KEY or ADMIN_API_KEY")
-    request_timeout = max(30.0, float(os.environ.get("AUTOMEM_WORKER_REQUEST_TIMEOUT_SECONDS", "900")))
-    return httpx.Client(
-        base_url=build_base_url(),
-        headers={"X-API-Key": api_key},
-        timeout=httpx.Timeout(connect=10.0, write=30.0, pool=30.0, read=request_timeout),
-        trust_env=False,
+def _import_backend_dispatch() -> tuple[Callable[..., Any], Callable[..., Any], Callable[[], None]]:
+    """Lazy import of backend.main internals so this script can run without
+    starting the FastAPI server. backend.main reads ZAI_API_KEY and friends
+    at module init time, so callers MUST run load_runtime_env() first.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from backend.main import (
+        claim_next_governance_job,
+        dispatch_governance_job,
+        ensure_task_db,
     )
+    return claim_next_governance_job, dispatch_governance_job, ensure_task_db
 
 
 def build_lock_path() -> Path:
@@ -139,21 +133,23 @@ def configure_logging() -> None:
         level=level,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-def run_once(client: Any, *, worker_id: str) -> dict[str, Any]:
-    response = client.post(
-        "/v1/governance/jobs/run-next",
-        json={
-            "worker_id": worker_id,
-            "lease_seconds": max(30, int(os.environ.get("AUTOMEM_WORKER_LEASE_SECONDS", "300"))),
-        },
-    )
-    if response.status_code != 200:
-        raise RuntimeError(f"governance worker failed with status {response.status_code}: {getattr(response, 'text', '')}")
-    return response.json()
+def run_once(*, worker_id: str, lease_seconds: int | None = None) -> dict[str, Any]:
+    """Claim the next governance job and dispatch it in-process.
+
+    Returns the same shape the /v1/governance/jobs/run-next endpoint returns:
+    {"status": "idle" | "processed", "worker_id": ..., "job": optional}.
+    """
+    claim, dispatch, ensure_db = _import_backend_dispatch()
+    ensure_db()
+    if lease_seconds is None:
+        lease_seconds = max(30, int(os.environ.get("AUTOMEM_WORKER_LEASE_SECONDS", "300")))
+    claimed = claim(worker_id=worker_id, job_types=None, lease_seconds=lease_seconds)
+    if not claimed:
+        return {"status": "idle", "worker_id": worker_id}
+    job = dispatch(claimed, worker_id=worker_id)
+    return {"status": "processed", "worker_id": worker_id, "job": job}
 
 
 def summarize_result(result: dict[str, Any]) -> str:
@@ -179,10 +175,9 @@ def main() -> int:
     once = (os.environ.get("AUTOMEM_WORKER_ONCE") or "true").strip().lower() in {"1", "true", "yes", "on"}
     worker_id = build_worker_id()
     logger.info(
-        "Starting governance worker with once=%s poll_seconds=%s base_url=%s worker_id=%s",
+        "Starting governance worker with once=%s poll_seconds=%s worker_id=%s",
         once,
         poll_seconds,
-        build_base_url(),
         worker_id,
     )
     idle_streak = 0
@@ -195,42 +190,38 @@ def main() -> int:
             print(json.dumps({"status": "skipped", "reason": "lock_exists"}, ensure_ascii=False))
             print("===AUTOMEM_PAYLOAD_END===")
             return 0
-        with build_client() as client:
-            while True:
-                try:
-                    result = run_once(client, worker_id=worker_id)
-                except httpx.HTTPError as exc:
-                    logger.error("Worker request failed: %s", exc)
-                    return 1
-                except Exception as exc:
-                    logger.error("Worker loop failed: %s", exc)
-                    return 1
-                status = str(result.get("status") or "unknown")
-                if status == "processed":
-                    idle_streak = 0
-                    logger.info("Worker processed governance job: %s", summarize_result(result))
-                elif status == "idle":
-                    idle_streak += 1
-                    if once or idle_streak == 1 or idle_streak % 12 == 0:
-                        logger.info(
-                            "Worker idle; no governance job claimed (idle_streak=%s worker_id=%s)",
-                            idle_streak,
-                            worker_id,
-                        )
-                else:
-                    idle_streak = 0
-                    logger.info("Worker poll result: %s", summarize_result(result))
-                if once:
-                    # Sentinel-wrapped final payload so runtime_drivers._parse_payload
-                    # can locate it regardless of any log noise.
-                    # Source of truth for sentinel strings: tests/support/runtime_drivers.py
-                    print("===AUTOMEM_PAYLOAD_BEGIN===")
-                    print(json.dumps(result, ensure_ascii=False))
-                    print("===AUTOMEM_PAYLOAD_END===")
-                    logger.info("Governance worker exiting with final status=%s", result.get("status"))
-                    break
-                logger.debug("Sleeping for %s seconds before the next poll", poll_seconds)
-                time.sleep(poll_seconds)
+        while True:
+            try:
+                result = run_once(worker_id=worker_id)
+            except Exception as exc:
+                logger.error("Worker loop failed: %s", exc)
+                return 1
+            status = str(result.get("status") or "unknown")
+            if status == "processed":
+                idle_streak = 0
+                logger.info("Worker processed governance job: %s", summarize_result(result))
+            elif status == "idle":
+                idle_streak += 1
+                if once or idle_streak == 1 or idle_streak % 12 == 0:
+                    logger.info(
+                        "Worker idle; no governance job claimed (idle_streak=%s worker_id=%s)",
+                        idle_streak,
+                        worker_id,
+                    )
+            else:
+                idle_streak = 0
+                logger.info("Worker poll result: %s", summarize_result(result))
+            if once:
+                # Sentinel-wrapped final payload so runtime_drivers._parse_payload
+                # can locate it regardless of any log noise.
+                # Source of truth for sentinel strings: tests/support/runtime_drivers.py
+                print("===AUTOMEM_PAYLOAD_BEGIN===")
+                print(json.dumps(result, ensure_ascii=False))
+                print("===AUTOMEM_PAYLOAD_END===")
+                logger.info("Governance worker exiting with final status=%s", result.get("status"))
+                break
+            logger.debug("Sleeping for %s seconds before the next poll", poll_seconds)
+            time.sleep(poll_seconds)
     return 0
 
 

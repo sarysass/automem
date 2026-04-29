@@ -1699,6 +1699,12 @@ def evaluate_task_materialization(
 def ensure_task_db() -> None:
     TASK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(TASK_DB_PATH) as conn:
+        # WAL allows the API process and the governance worker process to
+        # both read/write tasks.db without blocking each other on the
+        # single-writer journal lock. busy_timeout retries instead of
+        # raising SQLITE_BUSY immediately when contention happens.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (

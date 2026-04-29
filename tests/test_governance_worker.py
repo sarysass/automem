@@ -20,22 +20,50 @@ def worker_module():
     sys.modules.pop(spec.name, None)
 
 
-def test_run_once_posts_to_run_next(worker_module):
-    class FakeResponse:
-        status_code = 200
+def test_run_once_dispatches_directly_when_a_job_is_claimed(monkeypatch, worker_module):
+    seen: dict[str, object] = {}
 
-        def json(self):
-            return {"status": "idle", "worker_id": "worker-a"}
+    def fake_claim(*, worker_id, job_types, lease_seconds):
+        seen["claim"] = {"worker_id": worker_id, "job_types": job_types, "lease_seconds": lease_seconds}
+        return {"job_id": "job-42", "job_type": "consolidate"}
 
-    class FakeClient:
-        def post(self, path: str, json: dict[str, object]):
-            assert path == "/v1/governance/jobs/run-next"
-            assert json["worker_id"] == "worker-a"
-            return FakeResponse()
+    def fake_dispatch(claimed, *, worker_id):
+        seen["dispatch"] = {"claimed": claimed, "worker_id": worker_id}
+        return {"job_id": "job-42", "status": "completed"}
 
-    result = worker_module.run_once(FakeClient(), worker_id="worker-a")
+    def fake_ensure_db():
+        seen["ensure_db"] = True
 
-    assert result["status"] == "idle"
+    monkeypatch.setattr(
+        worker_module,
+        "_import_backend_dispatch",
+        lambda: (fake_claim, fake_dispatch, fake_ensure_db),
+    )
+
+    result = worker_module.run_once(worker_id="worker-a")
+
+    assert result == {
+        "status": "processed",
+        "worker_id": "worker-a",
+        "job": {"job_id": "job-42", "status": "completed"},
+    }
+    assert seen["ensure_db"] is True
+    assert seen["claim"]["worker_id"] == "worker-a"
+    assert seen["claim"]["job_types"] is None
+    assert seen["claim"]["lease_seconds"] >= 30
+    assert seen["dispatch"]["worker_id"] == "worker-a"
+
+
+def test_run_once_returns_idle_when_no_job_claimed(monkeypatch, worker_module):
+    monkeypatch.setattr(
+        worker_module,
+        "_import_backend_dispatch",
+        lambda: (lambda **_kw: None, lambda *_args, **_kw: {}, lambda: None),
+    )
+
+    result = worker_module.run_once(worker_id="worker-b")
+
+    assert result == {"status": "idle", "worker_id": "worker-b"}
 
 
 def test_single_worker_lock_reclaims_stale_lock(monkeypatch: pytest.MonkeyPatch, worker_module, tmp_path: Path):
@@ -67,20 +95,15 @@ def test_main_skips_when_worker_lock_exists(
     monkeypatch.setattr(worker_module, "load_runtime_env", lambda: None)
     monkeypatch.setattr(worker_module, "_pid_is_alive", lambda pid: True)
 
-    class UnexpectedClient:
-        def __enter__(self):
-            raise AssertionError("client should not be created while lock exists")
+    def explode():
+        raise AssertionError("run_once should not be called while lock is held")
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    monkeypatch.setattr(worker_module, "build_client", lambda: UnexpectedClient())
+    monkeypatch.setattr(worker_module, "run_once", lambda **_kw: explode())
 
     exit_code = worker_module.main()
 
     assert exit_code == 0
     out = capsys.readouterr().out
-    # Script now wraps its final payload between sentinel markers.
     begin = "===AUTOMEM_PAYLOAD_BEGIN==="
     end = "===AUTOMEM_PAYLOAD_END==="
     lines = out.splitlines()
@@ -105,14 +128,7 @@ def test_main_stays_alive_when_idle_in_service_mode(
 
     calls = {"run_once": 0, "sleep": 0}
 
-    class FakeClient:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_run_once(client, *, worker_id: str):
+    def fake_run_once(*, worker_id: str):
         calls["run_once"] += 1
         return {"status": "idle", "worker_id": worker_id}
 
@@ -121,7 +137,6 @@ def test_main_stays_alive_when_idle_in_service_mode(
         assert seconds == 1.0
         raise StopLoop()
 
-    monkeypatch.setattr(worker_module, "build_client", lambda: FakeClient())
     monkeypatch.setattr(worker_module, "run_once", fake_run_once)
     monkeypatch.setattr(worker_module.time, "sleep", fake_sleep)
 
@@ -132,7 +147,7 @@ def test_main_stays_alive_when_idle_in_service_mode(
     assert capsys.readouterr().out == ""
 
 
-def test_main_returns_error_code_on_http_timeout(
+def test_main_returns_error_code_when_run_once_raises(
     monkeypatch: pytest.MonkeyPatch,
     worker_module,
     tmp_path: Path,
@@ -142,15 +157,10 @@ def test_main_returns_error_code_on_http_timeout(
     monkeypatch.setenv("AUTOMEM_WORKER_ONCE", "false")
     monkeypatch.setattr(worker_module, "load_runtime_env", lambda: None)
 
-    class FakeClient:
-        def __enter__(self):
-            return self
+    def boom(**_kw):
+        raise RuntimeError("backend dispatch crashed")
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    monkeypatch.setattr(worker_module, "build_client", lambda: FakeClient())
-    monkeypatch.setattr(worker_module, "run_once", lambda client, *, worker_id: (_ for _ in ()).throw(worker_module.httpx.ReadTimeout("timed out")))
+    monkeypatch.setattr(worker_module, "run_once", boom)
 
     exit_code = worker_module.main()
 
