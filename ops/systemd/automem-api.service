@@ -7,9 +7,13 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/automem
 EnvironmentFile=/opt/automem/backend/.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/automem/.venv/bin/uvicorn backend.main:app --host ${BIND_HOST} --port ${BIND_PORT}
 Restart=always
 RestartSec=5
+SyslogIdentifier=automem-api
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

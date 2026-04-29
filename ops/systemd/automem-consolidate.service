@@ -7,4 +7,8 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/automem
 EnvironmentFile=/opt/automem/backend/.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/automem/.venv/bin/python /opt/automem/scripts/scheduled_consolidate.py
+SyslogIdentifier=automem-consolidate
+StandardOutput=journal
+StandardError=journal

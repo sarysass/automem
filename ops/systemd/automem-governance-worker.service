@@ -1,0 +1,20 @@
+[Unit]
+Description=automem governance worker
+After=network-online.target automem-api.service
+Wants=network-online.target automem-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/automem
+EnvironmentFile=/opt/automem/backend/.env
+Environment=AUTOMEM_WORKER_ONCE=false
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/automem/.venv/bin/python /opt/automem/scripts/governance_worker.py
+Restart=always
+RestartSec=5
+SyslogIdentifier=automem-governance-worker
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
