@@ -20,25 +20,43 @@ def worker_module():
     sys.modules.pop(spec.name, None)
 
 
-def test_run_once_dispatches_directly_when_a_job_is_claimed(monkeypatch, worker_module):
-    seen: dict[str, object] = {}
+class FakeResponse:
+    def __init__(self, payload: dict[str, object], status_code: int = 200, text: str = ""):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = text
 
-    def fake_claim(*, worker_id, job_types, lease_seconds):
-        seen["claim"] = {"worker_id": worker_id, "job_types": job_types, "lease_seconds": lease_seconds}
-        return {"job_id": "job-42", "job_type": "consolidate"}
+    def json(self):
+        return self._payload
 
-    def fake_dispatch(claimed, *, worker_id):
-        seen["dispatch"] = {"claimed": claimed, "worker_id": worker_id}
-        return {"job_id": "job-42", "status": "completed"}
 
-    def fake_ensure_db():
-        seen["ensure_db"] = True
+class FakeClient:
+    def __init__(self, response: FakeResponse):
+        self.response = response
+        self.requests: list[dict[str, object]] = []
 
-    monkeypatch.setattr(
-        worker_module,
-        "_import_backend_dispatch",
-        lambda: (fake_claim, fake_dispatch, fake_ensure_db),
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def post(self, path: str, json: dict[str, object]):
+        self.requests.append({"path": path, "json": json})
+        return self.response
+
+
+def test_run_once_calls_run_next_endpoint_when_processing_a_job(monkeypatch, worker_module):
+    client = FakeClient(
+        FakeResponse(
+            {
+                "status": "processed",
+                "worker_id": "worker-a",
+                "job": {"job_id": "job-42", "status": "completed"},
+            }
+        )
     )
+    monkeypatch.setattr(worker_module, "build_client", lambda: client)
 
     result = worker_module.run_once(worker_id="worker-a")
 
@@ -47,23 +65,27 @@ def test_run_once_dispatches_directly_when_a_job_is_claimed(monkeypatch, worker_
         "worker_id": "worker-a",
         "job": {"job_id": "job-42", "status": "completed"},
     }
-    assert seen["ensure_db"] is True
-    assert seen["claim"]["worker_id"] == "worker-a"
-    assert seen["claim"]["job_types"] is None
-    assert seen["claim"]["lease_seconds"] >= 30
-    assert seen["dispatch"]["worker_id"] == "worker-a"
+    assert client.requests == [
+        {
+            "path": "/v1/governance/jobs/run-next",
+            "json": {"worker_id": "worker-a", "lease_seconds": 300},
+        }
+    ]
 
 
-def test_run_once_returns_idle_when_no_job_claimed(monkeypatch, worker_module):
-    monkeypatch.setattr(
-        worker_module,
-        "_import_backend_dispatch",
-        lambda: (lambda **_kw: None, lambda *_args, **_kw: {}, lambda: None),
-    )
+def test_run_once_returns_idle_when_run_next_is_idle(monkeypatch, worker_module):
+    client = FakeClient(FakeResponse({"status": "idle", "worker_id": "worker-b"}))
+    monkeypatch.setattr(worker_module, "build_client", lambda: client)
 
     result = worker_module.run_once(worker_id="worker-b")
 
     assert result == {"status": "idle", "worker_id": "worker-b"}
+    assert client.requests == [
+        {
+            "path": "/v1/governance/jobs/run-next",
+            "json": {"worker_id": "worker-b", "lease_seconds": 300},
+        }
+    ]
 
 
 def test_single_worker_lock_reclaims_stale_lock(monkeypatch: pytest.MonkeyPatch, worker_module, tmp_path: Path):

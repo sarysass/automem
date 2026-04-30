@@ -6,12 +6,12 @@ import json
 import logging
 import os
 import socket
-import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+import httpx
 from dotenv import load_dotenv
 
 
@@ -34,22 +34,6 @@ def load_runtime_env() -> None:
     for candidate in candidates:
         if candidate.exists():
             load_dotenv(candidate)
-
-
-def _import_backend_dispatch() -> tuple[Callable[..., Any], Callable[..., Any], Callable[[], None]]:
-    """Lazy import of backend.main internals so this script can run without
-    starting the FastAPI server. backend.main reads ZAI_API_KEY and friends
-    at module init time, so callers MUST run load_runtime_env() first.
-    """
-    repo_root = Path(__file__).resolve().parents[1]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    from backend.main import (
-        claim_next_governance_job,
-        dispatch_governance_job,
-        ensure_task_db,
-    )
-    return claim_next_governance_job, dispatch_governance_job, ensure_task_db
 
 
 def build_lock_path() -> Path:
@@ -135,21 +119,44 @@ def configure_logging() -> None:
     )
 
 
+def build_base_url() -> str:
+    configured = os.environ.get("MEMORY_URL")
+    if configured:
+        return configured.rstrip("/")
+    host = os.environ.get("BIND_HOST", "127.0.0.1")
+    port = os.environ.get("BIND_PORT", "8888")
+    return f"http://{host}:{port}"
+
+
+def build_client() -> httpx.Client:
+    api_key = os.environ.get("MEMORY_API_KEY") or os.environ.get("ADMIN_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("Missing MEMORY_API_KEY or ADMIN_API_KEY")
+    return httpx.Client(
+        base_url=build_base_url(),
+        headers={"X-API-Key": api_key},
+        timeout=120.0,
+        trust_env=False,
+    )
+
+
 def run_once(*, worker_id: str, lease_seconds: int | None = None) -> dict[str, Any]:
-    """Claim the next governance job and dispatch it in-process.
+    """Ask the API process to claim and dispatch the next governance job.
 
     Returns the same shape the /v1/governance/jobs/run-next endpoint returns:
     {"status": "idle" | "processed", "worker_id": ..., "job": optional}.
     """
-    claim, dispatch, ensure_db = _import_backend_dispatch()
-    ensure_db()
     if lease_seconds is None:
         lease_seconds = max(30, int(os.environ.get("AUTOMEM_WORKER_LEASE_SECONDS", "300")))
-    claimed = claim(worker_id=worker_id, job_types=None, lease_seconds=lease_seconds)
-    if not claimed:
-        return {"status": "idle", "worker_id": worker_id}
-    job = dispatch(claimed, worker_id=worker_id)
-    return {"status": "processed", "worker_id": worker_id, "job": job}
+    payload = {"worker_id": worker_id, "lease_seconds": lease_seconds}
+    with build_client() as client:
+        response = client.post("/v1/governance/jobs/run-next", json=payload)
+    if response.status_code != 200:
+        raise RuntimeError(f"run-next failed with status {response.status_code}: {response.text}")
+    data = response.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("run-next returned a non-object JSON payload")
+    return data
 
 
 def summarize_result(result: dict[str, Any]) -> str:
