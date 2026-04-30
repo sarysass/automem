@@ -16,7 +16,6 @@ except ImportError:  # pragma: no cover - optional in test bootstrap
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -268,8 +267,9 @@ from backend.long_term import (  # noqa: F401, E402
     strip_shared_memories,
 )
 
-# Aggregated metrics + runtime topology (read-only, used by /v1/metrics + /v1/healthz).
-from backend.metrics import build_runtime_topology, compute_metrics  # noqa: E402
+# Aggregated metrics + runtime topology (read-only, used by routers/health.py).
+# Re-exported for tests/scripts that may still introspect via backend.main.
+from backend.metrics import build_runtime_topology, compute_metrics  # noqa: F401, E402
 
 # Hot-path routing extracted to backend.routing. Re-exported for tests
 # and the FastAPI handlers that reference these by bare name.
@@ -315,6 +315,13 @@ from backend.services import (  # noqa: F401, E402
     run_consolidation_operation,
     store_memory_with_governance,
 )
+
+# HTTP routers grouped by domain. Each module exports `router: APIRouter`
+# and a `_main_module` attribute that we wire up below so handlers can read
+# this main.py's CONFIG / FRONTEND_BUILD_DIR / get_memory_backend even under
+# the per-test importlib.spec_from_file_location reload pattern (see
+# tests/conftest.py + backend/routers/health.py docstring).
+from backend.routers import health  # noqa: E402
 
 
 def get_memory_backend():
@@ -391,72 +398,15 @@ def extract_memory_id(result: Any) -> Optional[str]:
     return None
 
 
-@app.get("/")
-def root():
-    return RedirectResponse(url="/docs")
-
-
-@app.get("/favicon.ico")
-def favicon():
-    return Response(status_code=204)
-
-
 if (FRONTEND_BUILD_DIR / "assets").exists():
     app.mount("/ui/assets", StaticFiles(directory=str(FRONTEND_BUILD_DIR / "assets")), name="ui-assets")
 
 
-@app.get("/v1/ui")
-def ui_index():
-    index_path = FRONTEND_BUILD_DIR / "index.html"
-    if not index_path.exists():
-        return HTMLResponse(
-            """
-            <!doctype html>
-            <html lang="zh-CN">
-              <head>
-                <meta charset="UTF-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                <title>UI build missing</title>
-                <style>
-                  body { font-family: "Songti SC", "STSong", serif; background:#f5f2eb; color:#201c16; padding:48px; }
-                  .panel { max-width:760px; margin:0 auto; background:#fbf8f2; border:1px solid #ddd4c7; border-radius:24px; padding:28px 32px; }
-                  h1 { margin:0 0 12px; font-size:32px; }
-                  p { margin:8px 0; line-height:1.7; }
-                  code { background:#efe8dc; padding:2px 8px; border-radius:999px; }
-                </style>
-              </head>
-              <body>
-                <div class="panel">
-                  <h1>前端构建产物不存在</h1>
-                  <p>当前仓库还没有生成可供后端直接托管的 UI 产物。</p>
-                  <p>请先在 <code>frontend/</code> 下执行 <code>npm install</code> 和 <code>npm run build</code>，再重新访问 <code>/ui</code>。</p>
-                </div>
-              </body>
-            </html>
-            """,
-            status_code=503,
-        )
-    return FileResponse(index_path)
-
-
-@app.get("/v1/healthz")
-def healthz(auth: dict[str, Any] = Depends(verify_api_key)):
-    require_scope(auth, "search")
-    return {
-        "ok": True,
-        "llm_model": CONFIG["llm"]["config"]["model"],
-        "embed_model": CONFIG["embedder"]["config"]["model"],
-        "qdrant": f"{CONFIG['vector_store']['config']['host']}:{CONFIG['vector_store']['config']['port']}",
-        "task_db": str(TASK_DB_PATH),
-        "runtime": build_runtime_topology(),
-        "metrics": compute_metrics(),
-    }
-
-
-@app.get("/v1/runtime-topology")
-def runtime_topology(auth: dict[str, Any] = Depends(verify_api_key)):
-    require_scope(auth, "metrics")
-    return {"runtime": build_runtime_topology(), "metrics": compute_metrics()["governance_jobs"]}
+# Wire health/UI/metrics router to this main module instance so it can read
+# CONFIG / TASK_DB_PATH / FRONTEND_BUILD_DIR via _main_module under the
+# per-test importlib reload pattern (see backend/routers/health.py docstring).
+health._main_module = sys.modules[__name__]
+app.include_router(health.router)
 
 
 @app.post("/v1/memories")
@@ -904,12 +854,6 @@ def tasks_normalize(payload: TaskNormalizeRequest, auth: dict[str, Any] = Depend
         "project_id": payload.project_id,
         "prune_non_work_archived": payload.prune_non_work_archived,
     }
-
-
-@app.get("/v1/metrics")
-def metrics(auth: dict[str, Any] = Depends(verify_api_key)):
-    require_scope(auth, "metrics")
-    return {"metrics": compute_metrics()}
 
 
 @app.post("/v1/consolidate")
