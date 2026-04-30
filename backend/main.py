@@ -45,11 +45,9 @@ if str(BACKEND_DIR) not in sys.path:
 from governance import (  # noqa: E402
     build_long_term_duplicate_key,
     filter_task_memory_fields,
-    judge_route,
     should_run_offline_judge,
     should_store_task_memory,
 )
-from governance.schemas import RouteDecision  # noqa: E402
 
 try:
     from mem0 import Memory
@@ -237,11 +235,7 @@ from backend.memory_cache import (  # noqa: E402
 from backend.tasks import (  # noqa: E402
     classify_task_kind,
     derive_task_summary,
-    derive_task_title,
     evaluate_task_materialization,
-    extract_task_lookup_subject,
-    is_task_lookup_question,
-    make_task_id,
     sanitize_task_summary_preview,
     sanitize_task_title,
     task_display_title,
@@ -279,6 +273,14 @@ from backend.long_term import (  # noqa: F401, E402
 
 # Aggregated metrics + runtime topology (read-only, used by /v1/metrics + /v1/healthz).
 from backend.metrics import build_runtime_topology, compute_metrics  # noqa: E402
+
+# Hot-path routing extracted to backend.routing. Re-exported for tests
+# and the FastAPI handlers that reference these by bare name.
+from backend.routing import (  # noqa: F401, E402
+    resolve_task,
+    route_memory,
+    task_candidate_score,
+)
 
 
 def get_memory_backend():
@@ -482,137 +484,6 @@ def store_memory_with_governance(
     if conflicts_with:
         result["conflicts_with"] = conflicts_with
     return result
-
-
-def route_memory(payload: MemoryRouteRequest) -> dict[str, Any]:
-    message = strip_shared_memories(payload.message)
-    assistant = strip_shared_memories(payload.assistant_output or "")
-    hints = payload.client_hints or {}
-
-    long_term_entries = extract_long_term_entries(message)
-    if not long_term_entries and hints.get("explicit_long_term"):
-        long_term_entries = extract_long_term_entries(assistant)
-
-    heuristic_task_like = bool(hints.get("task_like")) or looks_task_worthy(message, assistant)
-
-    def fallback_route_decision() -> RouteDecision:
-        if long_term_entries and heuristic_task_like:
-            return RouteDecision(
-                route="mixed",
-                reason="heuristic_mixed",
-                confidence=0.72,
-            )
-        if long_term_entries:
-            return RouteDecision(
-                route="long_term",
-                reason="heuristic_long_term",
-                confidence=0.86,
-            )
-        if heuristic_task_like:
-            return RouteDecision(
-                route="task",
-                reason="heuristic_task",
-                confidence=0.68,
-            )
-        return RouteDecision(
-            route="drop",
-            reason="heuristic_drop",
-            confidence=0.88,
-        )
-
-    route_decision = judge_route(
-        message=message,
-        assistant_output=assistant,
-        hints=hints,
-        long_term_entries=long_term_entries,
-        task_like=heuristic_task_like,
-        fallback=fallback_route_decision,
-    )
-
-    if route_decision.route in {"long_term", "mixed"} and not long_term_entries:
-        fallback = fallback_route_decision()
-        if fallback.route in {"long_term", "mixed"}:
-            long_term_entries = extract_long_term_entries(message or assistant)
-
-    task_result: Optional[dict[str, Any]] = None
-
-    if route_decision.route in {"task", "mixed"}:
-        resolution = resolve_task(
-            TaskResolutionRequest(
-                user_id=payload.user_id,
-                agent_id=payload.agent_id,
-                project_id=payload.project_id,
-                message=message,
-                assistant_output=assistant,
-                session_id=payload.session_id,
-                channel=payload.channel,
-            )
-        )
-        if resolution["action"] != "no_task":
-            task_payload = TaskSummaryWriteRequest(
-                user_id=payload.user_id,
-                agent_id=payload.agent_id,
-                project_id=payload.project_id,
-                task_id=resolution["task_id"],
-                title=resolution.get("title"),
-                message=message,
-                assistant_output=assistant,
-            )
-            structured = derive_task_summary(task_payload)
-            should_materialize, task_kind, _ = evaluate_task_materialization(
-                task_id=resolution["task_id"],
-                title=resolution.get("title"),
-                payload=task_payload,
-                structured=structured,
-            )
-            if should_materialize:
-                task_result = {
-                    "task_id": resolution["task_id"],
-                    "title": resolution.get("title"),
-                    "summary": structured,
-                    "resolution": resolution,
-                    "task_kind": task_kind,
-                }
-
-    if route_decision.route == "mixed" and long_term_entries and task_result:
-        return {
-            "route": "mixed",
-            "long_term": long_term_entries,
-            "task": task_result,
-            "reason": route_decision.reason,
-            "confidence": route_decision.confidence,
-            "judge": "llm" if route_decision.from_llm else "heuristic",
-        }
-    if route_decision.route == "mixed" and long_term_entries:
-        return {
-            "route": "long_term",
-            "entries": long_term_entries,
-            "reason": route_decision.reason,
-            "confidence": route_decision.confidence,
-            "judge": "llm" if route_decision.from_llm else "heuristic",
-        }
-    if route_decision.route == "long_term" and long_term_entries:
-        return {
-            "route": "long_term",
-            "entries": long_term_entries,
-            "reason": route_decision.reason,
-            "confidence": route_decision.confidence,
-            "judge": "llm" if route_decision.from_llm else "heuristic",
-        }
-    if route_decision.route == "task" and task_result:
-        return {
-            "route": "task",
-            "task": task_result,
-            "reason": route_decision.reason,
-            "confidence": route_decision.confidence,
-            "judge": "llm" if route_decision.from_llm else "heuristic",
-        }
-    return {
-        "route": "drop",
-        "reason": route_decision.reason,
-        "confidence": route_decision.confidence,
-        "judge": "llm" if route_decision.from_llm else "heuristic",
-    }
 
 
 LONG_TERM_USER_CATEGORIES = {"user_profile", "preference"}
@@ -1682,122 +1553,6 @@ def upsert_task(*, task_id: str, user_id: str, project_id: Optional[str], title:
         "updated_at": now,
         "closed_at": None,
         "archived_at": None,
-    }
-
-
-def task_candidate_score(message: str, task: dict[str, Any]) -> float:
-    title = normalize_text(task.get("title") or "")
-    aliases = [normalize_text(alias) for alias in task.get("aliases") or [] if alias]
-    summary = normalize_text(task.get("last_summary") or "")
-    haystack = " ".join(part for part in [title, *aliases, summary] if part)
-    message_normalized = normalize_text(message)
-    message_tokens = task_tokens(message_normalized)
-    haystack_tokens = task_tokens(haystack)
-    if not message_tokens or not haystack_tokens or not haystack:
-        return 0.0
-    overlap = len(message_tokens & haystack_tokens)
-    union = len(message_tokens | haystack_tokens)
-    score = overlap / union if union else 0.0
-
-    message_lower = message_normalized.lower()
-    haystack_lower = haystack.lower()
-    if message_lower and message_lower in haystack_lower:
-        score += 0.22
-    elif title and title.lower() in message_lower:
-        score += 0.18
-    elif any(alias.lower() in message_lower for alias in aliases):
-        score += 0.14
-
-    if re.search(r"下一步|接下来|next step|next action", message_lower):
-        if re.search(r"下一步|next action", summary.lower()):
-            score += 0.14
-        if re.search(r"下一步|next action", title.lower()):
-            score += 0.08
-
-    subject = extract_task_lookup_subject(message_normalized)
-    if subject:
-        subject_lower = subject.lower()
-        if subject_lower in title.lower():
-            score += 0.18
-        elif any(subject_lower in alias.lower() for alias in aliases):
-            score += 0.14
-        elif subject_lower in summary.lower():
-            score += 0.1
-
-    return min(score, 1.0)
-
-
-def resolve_task(payload: TaskResolutionRequest) -> dict[str, Any]:
-    if not looks_task_worthy(payload.message, payload.assistant_output):
-        return {"action": "no_task", "task_id": None, "title": None, "confidence": 0.0, "reason": "Content is not task-like"}
-
-    lookup_question = is_task_lookup_question(payload.message)
-    tasks = [task for task in fetch_tasks(payload.user_id, payload.project_id, "active") if task.get("task_kind") == "work"]
-    scored = [(task_candidate_score(payload.message, task), task) for task in tasks]
-    scored.sort(key=lambda item: item[0], reverse=True)
-
-    match_threshold = 0.24 if lookup_question else 0.18
-    if scored and scored[0][0] >= match_threshold:
-        score, task = scored[0]
-        return {
-            "action": "match_existing_task",
-            "task_id": task["task_id"],
-            "title": task["title"],
-            "confidence": round(score, 4),
-            "reason": "Matched existing active task by semantic overlap",
-        }
-
-    if lookup_question:
-        return {
-            "action": "no_task",
-            "task_id": None,
-            "title": None,
-            "confidence": round(scored[0][0], 4) if scored else 0.0,
-            "reason": "No sufficiently relevant active task matched this lookup question",
-        }
-
-    title = derive_task_title(payload.message)
-    task_id = make_task_id(title)
-    structured = derive_task_summary(
-        TaskSummaryWriteRequest(
-            user_id=payload.user_id,
-            agent_id=payload.agent_id,
-            project_id=payload.project_id,
-            task_id=task_id,
-            title=title,
-            message=payload.message,
-            assistant_output=payload.assistant_output,
-        )
-    )
-    should_materialize, task_kind, task_reason = evaluate_task_materialization(
-        task_id=task_id,
-        title=title,
-        payload=TaskSummaryWriteRequest(
-            user_id=payload.user_id,
-            agent_id=payload.agent_id,
-            project_id=payload.project_id,
-            task_id=task_id,
-            title=title,
-            message=payload.message,
-            assistant_output=payload.assistant_output,
-        ),
-        structured=structured,
-    )
-    if not should_materialize:
-        return {
-            "action": "no_task",
-            "task_id": None,
-            "title": None,
-            "confidence": 0.0,
-            "reason": task_reason,
-            "task_kind": task_kind,
-        }
-    return {
-        "action": "propose_new_task",
-        "task_id": task_id,
-        "title": title,
-        "confidence": 1.0,
-        "reason": "Proposed a new task from task-like content",
     }
 
 
