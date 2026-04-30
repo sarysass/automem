@@ -58,6 +58,9 @@ def _base_runtime_env(live_backend: LiveBackendHarness) -> dict[str, str]:
         "ADMIN_API_KEY": live_backend.admin_api_key,
         "TASK_DB_PATH": str(live_backend.task_db_path),
         "HISTORY_DB_PATH": str(live_backend.history_db_path),
+        "ZAI_API_KEY": "test-zai-key",
+        "ZAI_BASE_URL": "https://example.invalid",
+        "ZAI_MODEL": "glm-test",
     }
 
 

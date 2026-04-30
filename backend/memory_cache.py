@@ -22,6 +22,7 @@ import re
 import sqlite3
 from typing import Any, Optional
 
+from backend.governance.project_lifecycle import PROJECT_CURRENT_FACT_KEYS, infer_project_context_fact_key
 from backend.storage import _resolve_task_db_path, ensure_task_db
 
 
@@ -38,6 +39,7 @@ AUTO_SUPERSEDE_FACT_KEYS = {
     "user_profile:role",
     "preference:language",
     "preference:summary_style",
+    *PROJECT_CURRENT_FACT_KEYS,
 }
 
 
@@ -100,6 +102,9 @@ def infer_long_term_fact_key(text: str, metadata: Optional[dict[str, Any]]) -> s
         if re.search(r"身份|角色|role|title|ceo|cto|founder|创始人|负责人", lower, re.I):
             return "user_profile:role"
     if category == "project_context":
+        project_fact_key = infer_project_context_fact_key(normalized, meta)
+        if project_fact_key:
+            return project_fact_key
         if re.search(r"公司|company|corp|inc|llc|集团|团队", lower, re.I):
             return "project_context:company"
     digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]

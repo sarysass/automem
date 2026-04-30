@@ -521,6 +521,147 @@ def test_consolidate_supersedes_legacy_active_fact_versions(client, auth_headers
     assert statuses["偏好使用中文沟通"] == "superseded"
 
 
+def test_project_current_state_memory_supersedes_previous_active_fact(client, auth_headers):
+    first = add_long_term_memory(
+        client,
+        auth_headers,
+        text="Automem current memory-governance state: old policy leaves process logs active",
+        user_id="user-a",
+        category="project_context",
+    )
+    first_id = first["results"][0]["id"]
+
+    second = add_long_term_memory(
+        client,
+        auth_headers,
+        text="Automem current memory-governance state: daily consolidate archives stale process logs",
+        user_id="user-a",
+        category="project_context",
+    )
+
+    assert second["fact_status"] == "active"
+    assert second["fact_action"] == "superseded"
+    assert second["superseded_memory_ids"] == [first_id]
+
+    response = client.get(
+        "/v1/memories",
+        headers=auth_headers,
+        params={"user_id": "user-a", "category": "project_context"},
+    )
+    assert response.status_code == 200, response.text
+    by_status = {item["metadata"]["status"]: item for item in response.json()["results"]}
+    assert by_status["active"]["memory"] == (
+        "Automem current memory-governance state: daily consolidate archives stale process logs"
+    )
+    assert by_status["superseded"]["memory"] == (
+        "Automem current memory-governance state: old policy leaves process logs active"
+    )
+
+
+def test_consolidate_archives_project_context_process_logs_without_deleting_history(
+    client,
+    auth_headers,
+    backend_module,
+):
+    for idx, text in enumerate(
+        (
+            "Phase 07 completed: validation passed for an older routing rollout",
+            "Phase 08 progress: research notes and review checklist were captured",
+        ),
+        start=1,
+    ):
+        result = backend_module.MEMORY_BACKEND.add(
+            [{"role": "user", "content": text}],
+            user_id="user-a",
+            metadata={
+                "domain": "long_term",
+                "category": "project_context",
+                "status": "active",
+                "valid_from": f"2026-01-0{idx}T00:00:00+00:00",
+            },
+        )
+        backend_module.cache_memory_record(
+            memory_id=result["id"],
+            text=text,
+            user_id="user-a",
+            run_id=None,
+            agent_id=None,
+            metadata={
+                "domain": "long_term",
+                "category": "project_context",
+                "status": "active",
+                "valid_from": f"2026-01-0{idx}T00:00:00+00:00",
+            },
+            created_at=f"2026-01-0{idx}T00:00:00+00:00",
+        )
+
+    current = backend_module.MEMORY_BACKEND.add(
+        [{"role": "user", "content": "gc-jp VPS currently runs automem-consolidate.timer daily at 03:30"}],
+        user_id="user-a",
+        metadata={
+            "domain": "long_term",
+            "category": "project_context",
+            "status": "active",
+            "valid_from": "2026-01-03T00:00:00+00:00",
+        },
+    )
+    backend_module.cache_memory_record(
+        memory_id=current["id"],
+        text="gc-jp VPS currently runs automem-consolidate.timer daily at 03:30",
+        user_id="user-a",
+        run_id=None,
+        agent_id=None,
+        metadata={
+            "domain": "long_term",
+            "category": "project_context",
+            "status": "active",
+            "valid_from": "2026-01-03T00:00:00+00:00",
+        },
+        created_at="2026-01-03T00:00:00+00:00",
+    )
+
+    response = client.post(
+        "/v1/consolidate",
+        headers=auth_headers,
+        json={"dry_run": False, "user_id": "user-a"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["archived_project_context_count"] == 2
+
+    current_payload = client.get(
+        "/v1/memories",
+        headers=auth_headers,
+        params={"user_id": "user-a"},
+    ).json()
+    current_texts = [
+        item["memory"]
+        for item in current_payload["results"]
+        if (item.get("metadata") or {}).get("status") == "active"
+    ]
+    assert "Phase 07 completed: validation passed for an older routing rollout" not in current_texts
+    assert "Phase 08 progress: research notes and review checklist were captured" not in current_texts
+    assert "gc-jp VPS currently runs automem-consolidate.timer daily at 03:30" in current_texts
+
+    history = client.get(
+        "/v1/memories",
+        headers=auth_headers,
+        params={"user_id": "user-a"},
+    )
+    assert history.status_code == 200, history.text
+    archived = {
+        item["memory"]: item["metadata"]
+        for item in history.json()["results"]
+        if (item.get("metadata") or {}).get("status") == "superseded"
+    }
+    assert archived["Phase 07 completed: validation passed for an older routing rollout"]["superseded_by"] == (
+        "consolidation:project_context_process_log"
+    )
+    assert archived["Phase 08 progress: research notes and review checklist were captured"]["superseded_by"] == (
+        "consolidation:project_context_process_log"
+    )
+
+
 def test_search_uses_cache_path_without_get_all(client, auth_headers, backend_module):
     add_long_term_memory(client, auth_headers, text="alpha routing policy", user_id="user-a")
 

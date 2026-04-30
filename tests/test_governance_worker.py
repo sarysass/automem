@@ -27,9 +27,12 @@ def test_run_once_dispatches_directly_when_a_job_is_claimed(monkeypatch, worker_
         seen["claim"] = {"worker_id": worker_id, "job_types": job_types, "lease_seconds": lease_seconds}
         return {"job_id": "job-42", "job_type": "consolidate"}
 
-    def fake_dispatch(claimed, *, worker_id):
-        seen["dispatch"] = {"claimed": claimed, "worker_id": worker_id}
+    def fake_dispatch(claimed, *, worker_id, memory_backend):
+        seen["dispatch"] = {"claimed": claimed, "worker_id": worker_id, "memory_backend": memory_backend}
         return {"job_id": "job-42", "status": "completed"}
+
+    def fake_get_memory_backend():
+        return "fake-memory-backend"
 
     def fake_ensure_db():
         seen["ensure_db"] = True
@@ -37,7 +40,7 @@ def test_run_once_dispatches_directly_when_a_job_is_claimed(monkeypatch, worker_
     monkeypatch.setattr(
         worker_module,
         "_import_backend_dispatch",
-        lambda: (fake_claim, fake_dispatch, fake_ensure_db),
+        lambda: (fake_claim, fake_dispatch, fake_get_memory_backend, fake_ensure_db),
     )
 
     result = worker_module.run_once(worker_id="worker-a")
@@ -52,13 +55,14 @@ def test_run_once_dispatches_directly_when_a_job_is_claimed(monkeypatch, worker_
     assert seen["claim"]["job_types"] is None
     assert seen["claim"]["lease_seconds"] >= 30
     assert seen["dispatch"]["worker_id"] == "worker-a"
+    assert seen["dispatch"]["memory_backend"] == "fake-memory-backend"
 
 
 def test_run_once_returns_idle_when_no_job_claimed(monkeypatch, worker_module):
     monkeypatch.setattr(
         worker_module,
         "_import_backend_dispatch",
-        lambda: (lambda **_kw: None, lambda *_args, **_kw: {}, lambda: None),
+        lambda: (lambda **_kw: None, lambda *_args, **_kw: {}, lambda: None, lambda: None),
     )
 
     result = worker_module.run_once(worker_id="worker-b")

@@ -62,6 +62,7 @@ import sqlite3
 from typing import Any, Optional
 
 from backend.audit_log import write_audit
+from backend.governance.project_lifecycle import is_archivable_project_context_process_log
 from backend.governance_jobs import (
     GOVERNANCE_JOB_STATUS_COMPLETED,
     GOVERNANCE_JOB_STATUS_FAILED,
@@ -508,6 +509,7 @@ def run_consolidation_operation(
     rewrite_rows: list[dict[str, Any]] = []
     canonicalized_long_term_count = 0
     superseded_fact_count = 0
+    archived_project_context_count = 0
     task_normalize_result = {
         "scanned_tasks": 0,
         "updated_titles": 0,
@@ -644,6 +646,7 @@ def run_consolidation_operation(
 
     active_fact_rows = load_long_term_cache_rows(user_id=payload.user_id, project_id=payload.project_id)
     fact_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    legacy_supersessions: list[tuple[list[dict[str, Any]], str]] = []
     for item in active_fact_rows:
         fact_metadata = build_long_term_fact_metadata(
             text=str(item.get("text") or ""),
@@ -654,6 +657,10 @@ def run_consolidation_operation(
         if long_term_status_from_metadata(fact_metadata) != LONG_TERM_FACT_STATUS_ACTIVE:
             continue
         item["fact_metadata"] = fact_metadata
+        if is_archivable_project_context_process_log(str(item.get("text") or ""), fact_metadata):
+            legacy_supersessions.append(([item], "consolidation:project_context_process_log"))
+            archived_project_context_count += 1
+            continue
         fact_groups.setdefault(
             (
                 str(item.get("user_id") or ""),
@@ -663,7 +670,6 @@ def run_consolidation_operation(
             [],
         ).append(item)
 
-    legacy_supersessions: list[tuple[list[dict[str, Any]], str]] = []
     for group in fact_groups.values():
         if len(group) <= 1:
             continue
@@ -698,6 +704,7 @@ def run_consolidation_operation(
         "duplicate_long_term_count": len(duplicate_memory_ids),
         "canonicalized_long_term_count": canonicalized_long_term_count,
         "superseded_fact_count": superseded_fact_count,
+        "archived_project_context_count": archived_project_context_count,
         "deleted_noise_count": len(noise_memory_ids),
         "archived_tasks_count": archived_tasks_count,
         "normalized_tasks_count": task_normalize_result["changed_tasks"],

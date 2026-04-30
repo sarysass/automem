@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
 from dotenv import load_dotenv
 
 
@@ -36,7 +37,7 @@ def load_runtime_env() -> None:
             load_dotenv(candidate)
 
 
-def _import_backend_dispatch() -> tuple[Callable[..., Any], Callable[..., Any], Callable[[], None]]:
+def _import_backend_dispatch() -> tuple[Callable[..., Any], Callable[..., Any], Callable[[], Any], Callable[[], None]]:
     """Lazy import of backend.main internals so this script can run without
     starting the FastAPI server. backend.main reads ZAI_API_KEY and friends
     at module init time, so callers MUST run load_runtime_env() first.
@@ -48,8 +49,9 @@ def _import_backend_dispatch() -> tuple[Callable[..., Any], Callable[..., Any], 
         claim_next_governance_job,
         dispatch_governance_job,
         ensure_task_db,
+        get_memory_backend,
     )
-    return claim_next_governance_job, dispatch_governance_job, ensure_task_db
+    return claim_next_governance_job, dispatch_governance_job, get_memory_backend, ensure_task_db
 
 
 def build_lock_path() -> Path:
@@ -126,6 +128,36 @@ def build_worker_id() -> str:
     return f"automem-worker@{socket.gethostname()}"
 
 
+def build_base_url() -> str:
+    configured = os.environ.get("MEMORY_URL")
+    if configured:
+        return configured.rstrip("/")
+    host = os.environ.get("BIND_HOST", "127.0.0.1")
+    port = os.environ.get("BIND_PORT", "8888")
+    return f"http://{host}:{port}"
+
+
+def run_once_via_http(*, worker_id: str, lease_seconds: int) -> dict[str, Any]:
+    api_key = os.environ.get("MEMORY_API_KEY") or os.environ.get("ADMIN_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("Missing MEMORY_API_KEY or ADMIN_API_KEY")
+    with httpx.Client(
+        base_url=build_base_url(),
+        headers={"X-API-Key": api_key},
+        timeout=30.0,
+        trust_env=False,
+    ) as client:
+        response = client.post(
+            "/v1/governance/jobs/run-next",
+            json={"worker_id": worker_id, "lease_seconds": lease_seconds},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Worker run-next endpoint returned a non-object payload")
+    return payload
+
+
 def configure_logging() -> None:
     level_name = (os.environ.get("AUTOMEM_WORKER_LOG_LEVEL") or "INFO").strip().upper()
     level = getattr(logging, level_name, logging.INFO)
@@ -141,14 +173,16 @@ def run_once(*, worker_id: str, lease_seconds: int | None = None) -> dict[str, A
     Returns the same shape the /v1/governance/jobs/run-next endpoint returns:
     {"status": "idle" | "processed", "worker_id": ..., "job": optional}.
     """
-    claim, dispatch, ensure_db = _import_backend_dispatch()
-    ensure_db()
     if lease_seconds is None:
         lease_seconds = max(30, int(os.environ.get("AUTOMEM_WORKER_LEASE_SECONDS", "300")))
+    if os.environ.get("MEMORY_URL"):
+        return run_once_via_http(worker_id=worker_id, lease_seconds=lease_seconds)
+    claim, dispatch, get_memory_backend, ensure_db = _import_backend_dispatch()
+    ensure_db()
     claimed = claim(worker_id=worker_id, job_types=None, lease_seconds=lease_seconds)
     if not claimed:
         return {"status": "idle", "worker_id": worker_id}
-    job = dispatch(claimed, worker_id=worker_id)
+    job = dispatch(claimed, worker_id=worker_id, memory_backend=get_memory_backend())
     return {"status": "processed", "worker_id": worker_id, "job": job}
 
 
