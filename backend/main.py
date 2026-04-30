@@ -169,6 +169,7 @@ from backend.schemas import (  # noqa: E402
 # Storage primitives (TASK_DB_PATH, ensure_task_db, etc.) live in
 # backend.storage. Re-exported here for backward compatibility.
 from backend.storage import (  # noqa: F401, E402
+    _resolve_task_db_path,
     ensure_task_db,
     hash_token,  # re-exported for tests that craft fake api_keys rows
     now_epoch,
@@ -770,7 +771,7 @@ def rebuild_memory_cache(*, user_id: Optional[str], run_id: Optional[str], agent
     if agent_id is not None:
         query += " AND agent_id = ?"
         sql_params.append(agent_id)
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         stale_ids = [
             row[0]
             for row in conn.execute(query, sql_params).fetchall()
@@ -870,7 +871,7 @@ def fetch_task_search_context(
         placeholders = ",".join("?" for _ in task_ids)
         query += f" AND task_id IN ({placeholders})"
         params.extend(task_ids)
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(query, params).fetchall()
     context: dict[str, dict[str, Any]] = {}
@@ -1216,7 +1217,7 @@ def hybrid_search(
             sql += " AND (" + " OR ".join(variant_clauses) + ")"
             sql_params.extend(variant_params)
         sql += " ORDER BY c.updated_at DESC LIMIT 50"
-        with sqlite3.connect(TASK_DB_PATH) as conn:
+        with sqlite3.connect(_resolve_task_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(sql, sql_params).fetchall()
         for row in rows:
@@ -1293,7 +1294,7 @@ def hybrid_search(
             if effective_filters.get("domain"):
                 sql += " AND c.domain = ?"
                 sql_params.append(effective_filters["domain"])
-            with sqlite3.connect(TASK_DB_PATH) as conn:
+            with sqlite3.connect(_resolve_task_db_path()) as conn:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(sql, sql_params).fetchall()
             for row in rows:
@@ -1415,7 +1416,7 @@ def fetch_tasks_page(
         params.extend([cursor_updated_at, cursor_updated_at, cursor_task_id])
     query += " ORDER BY updated_at DESC, task_id DESC LIMIT ?"
     params.append(page_size + 1)
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(query, params).fetchall()
     has_more = len(rows) > page_size
@@ -1462,7 +1463,7 @@ def fetch_task_ids_with_memory(
     if project_id is not None:
         query += " AND project_id IS ?"
         params.append(project_id)
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         rows = conn.execute(query, params).fetchall()
     return {str(row[0]) for row in rows if row and row[0]}
 
@@ -1495,7 +1496,7 @@ def normalize_tasks(
     if project_id is not None:
         query += " AND project_id IS ?"
         params.append(project_id)
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(query, params).fetchall()
 
@@ -1515,7 +1516,7 @@ def normalize_tasks(
     archived_work_without_memory_task_ids_to_delete: list[str] = []
     task_ids_with_memory = fetch_task_ids_with_memory(user_id=user_id, project_id=project_id)
     now = utcnow_iso()
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         for row in rows:
             task = dict(row)
             old_title = task.get("title") or ""
@@ -1641,7 +1642,7 @@ def upsert_task(*, task_id: str, user_id: str, project_id: Optional[str], title:
     now = utcnow_iso()
     title = sanitize_task_title(title, last_summary=last_summary, task_id=task_id)
     aliases_json = json.dumps(aliases or [], ensure_ascii=False)
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         existing = conn.execute(
             "SELECT task_id, created_at FROM tasks WHERE task_id = ?",
             (task_id,),
@@ -2193,7 +2194,7 @@ def list_tasks(
 def get_task(task_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
     ensure_task_db()
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT task_id, user_id, project_id, title, aliases_json, status, last_summary, source_agent, owner_agent, priority, created_at, updated_at, closed_at, archived_at FROM tasks WHERE task_id = ?",
@@ -2212,7 +2213,7 @@ def get_task(task_id: str, auth: dict[str, Any] = Depends(verify_api_key)):
 @app.post("/v1/tasks/{task_id}/close")
 def close_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT task_id, user_id, project_id, title, aliases_json, status, last_summary, source_agent, owner_agent, priority, created_at, updated_at, closed_at, archived_at FROM tasks WHERE task_id = ?",
@@ -2243,7 +2244,7 @@ def close_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any]
 @app.post("/v1/tasks/{task_id}/archive")
 def archive_task(task_id: str, payload: TaskLifecycleRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "task")
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT task_id, user_id, project_id, title, aliases_json, status, last_summary, source_agent, owner_agent, priority, created_at, updated_at, closed_at, archived_at FROM tasks WHERE task_id = ?",
@@ -2357,7 +2358,7 @@ def run_consolidation_operation(
             dry_run=payload.dry_run,
             refresh_cache=False,
         )
-    with sqlite3.connect(TASK_DB_PATH) as conn:
+    with sqlite3.connect(_resolve_task_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         query = """
             SELECT memory_id, user_id, run_id, agent_id, source_agent, domain, category,
@@ -2414,7 +2415,7 @@ def run_consolidation_operation(
             duplicate_memory_ids.append(str(duplicate["memory_id"]))
     closed_tasks_archived = 0
     if payload.archive_closed_tasks and not payload.dry_run:
-        with sqlite3.connect(TASK_DB_PATH) as conn:
+        with sqlite3.connect(_resolve_task_db_path()) as conn:
             cursor = conn.execute(
                 "UPDATE tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE status = 'closed'",
                 (utcnow_iso(), utcnow_iso()),
