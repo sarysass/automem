@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - optional in test bootstrap
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -171,7 +171,9 @@ from backend.storage import (  # noqa: F401, E402
 )
 
 # Agent key storage (api_keys table) lives in backend.agent_keys.
-from backend.agent_keys import (  # noqa: E402
+# create_agent_key + list_api_keys are re-exports for adapters using
+# `from backend.main import create_agent_key`.
+from backend.agent_keys import (  # noqa: F401, E402
     create_agent_key,
     list_api_keys,
     normalize_project_ids,
@@ -320,7 +322,7 @@ from backend.services import (  # noqa: F401, E402
 # this main.py's CONFIG / FRONTEND_BUILD_DIR / get_memory_backend even under
 # the per-test importlib.spec_from_file_location reload pattern (see
 # tests/conftest.py + backend/routers/health.py docstring).
-from backend.routers import governance, health, memories, tasks  # noqa: E402
+from backend.routers import admin, governance, health, memories, tasks  # noqa: E402
 
 
 def get_memory_backend():
@@ -410,36 +412,8 @@ app.include_router(health.router)
 app.include_router(memories.router)
 app.include_router(tasks.router)
 app.include_router(governance.router)
+app.include_router(admin.router)
 
 
-@app.post("/v1/agent-keys")
-def agent_keys_create(payload: AgentKeyCreateRequest, auth: dict[str, Any] = Depends(verify_api_key)):
-    require_scope(auth, "admin")
-    if "admin" not in payload.scopes and not payload.user_id:
-        raise HTTPException(status_code=400, detail="Non-admin API keys require user_id")
-    return create_agent_key(
-        agent_id=payload.agent_id,
-        label=payload.label,
-        scopes=payload.scopes,
-        user_id=payload.user_id,
-        project_ids=payload.project_ids,
-        token=payload.token,
-    )
-
-
-@app.get("/v1/agent-keys")
-def agent_keys_list(auth: dict[str, Any] = Depends(verify_api_key)):
-    require_scope(auth, "admin")
-    return {"keys": list_api_keys()}
-
-
-@app.get("/v1/audit-log")
-def audit_log(
-    limit: int = 50,
-    event_type: Optional[str] = None,
-    auth: dict[str, Any] = Depends(verify_api_key),
-):
-    require_scope(auth, "admin")
-    return {"events": fetch_audit_log(limit=limit, event_type=event_type)}
 
 
