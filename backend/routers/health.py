@@ -7,18 +7,18 @@ is NOT the canonical `backend.main`. CONFIG / TASK_DB_PATH / FRONTEND_BUILD_DIR
 live as module attributes that tests mutate per-fixture (see
 test_ui_route_reports_missing_build_artifacts which sets
 backend_module.FRONTEND_BUILD_DIR). Routers therefore must NOT bind to
-canonical `backend.main` — instead, main.py at import time assigns
-`health._main_module = sys.modules[__name__]`, and handlers read those
-attributes via that pointer. Whichever main.py loads last (the active one)
-wins, which is correct since tests run sequentially and use only their
-fixture's app.
+canonical `backend.main` — instead, main.py at import time stores a pointer
+to itself on `app.state.main_module`, and handlers read those attributes via
+`request.app.state.main_module`. Each FastAPI app has its own state, so the
+canonical and per-test main modules stay properly isolated even when both
+are loaded in the same process (services.py lazy-imports backend.main).
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from backend.auth import require_scope, verify_api_key
@@ -26,18 +26,13 @@ from backend.metrics import build_runtime_topology, compute_metrics
 
 router = APIRouter()
 
-# Set by main.py at import time so handlers can read CONFIG / TASK_DB_PATH /
-# FRONTEND_BUILD_DIR from the active main module (canonical in production,
-# per-fixture loaded module in tests). See module docstring.
-_main_module: Optional[Any] = None
 
+def _main(request: Request):
+    """Return the main.py module instance that owns this request's app.
 
-def _main():
-    if _main_module is not None:
-        return _main_module
-    # Production fallback when main.py forgot to wire us up.
-    from backend import main as _m  # noqa: PLC0415
-    return _m
+    Set by main.py at import time via `app.state.main_module = sys.modules[__name__]`.
+    """
+    return request.app.state.main_module
 
 
 @router.get("/")
@@ -51,8 +46,8 @@ def favicon():
 
 
 @router.get("/v1/ui")
-def ui_index():
-    index_path = _main().FRONTEND_BUILD_DIR / "index.html"
+def ui_index(request: Request):
+    index_path = _main(request).FRONTEND_BUILD_DIR / "index.html"
     if not index_path.exists():
         return HTMLResponse(
             """
@@ -85,9 +80,9 @@ def ui_index():
 
 
 @router.get("/v1/healthz")
-def healthz(auth: dict[str, Any] = Depends(verify_api_key)):
+def healthz(request: Request, auth: dict[str, Any] = Depends(verify_api_key)):
     require_scope(auth, "search")
-    main = _main()
+    main = _main(request)
     return {
         "ok": True,
         "llm_model": main.CONFIG["llm"]["config"]["model"],
